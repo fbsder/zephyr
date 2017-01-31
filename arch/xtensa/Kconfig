@@ -5,7 +5,7 @@
 
 choice
 	prompt "XTENSA core Selection"
-	default hifi3_bd5
+	default D_233L
 	depends on XTENSA
 
 source "arch/xtensa/soc/Kconfig.cores"
