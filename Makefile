@@ -380,7 +380,6 @@ ZEPHYRINCLUDE    = \
 KBUILD_CPPFLAGS := -DKERNEL -D__ZEPHYR__=1
 
 KBUILD_CFLAGS   := -c -g -std=c99 \
-		-fno-asynchronous-unwind-tables \
 		-Wall \
 		-Wformat \
 		-Wformat-security \
@@ -641,6 +640,9 @@ KBUILD_CFLAGS += $(call cc-option,-fno-reorder-blocks,) \
                  $(call cc-option,-fno-ipa-cp-clone,) \
                  $(call cc-option,-fno-partial-inlining)
 endif
+
+# Some GCC variants don't support these
+KBUILD_CFLAGS += $(call cc-option,-fno-asynchronous-unwind-tables,)
 
 ifeq ($(CONFIG_STACK_CANARIES),y)
 KBUILD_CFLAGS += $(call cc-option,-fstack-protector-all,)
