@@ -347,6 +347,9 @@ extern void *__stack_chk_guard;
 #elif defined(CONFIG_RISCV32)
 #define _MOVE_INSTR "sw %1, 0x00(%0)"
 #define _MOVE_MEM "=r"
+#elif defined(CONFIG_XTENSA)
+#define _MOVE_INSTR "s32i %1, %0, 0"
+#define _MOVE_MEM "=r"
 #else
 #error "Unknown Architecture type"
 #endif /* CONFIG_X86 */
