@@ -133,7 +133,7 @@ void fiber_entry(void)
 	}
 }
 
-void main(void)
+int main(void)
 {
 	struct nano_timer timer;
 	uint32_t data[2] = {0, 0};
