@@ -1,0 +1,9 @@
+# Kconfig - SAMR21 XPRO board configuration
+#
+
+if BOARD_SAMR21_XPRO
+
+config BOARD
+	default samr21_xpro
+
+endif # BOARD_SAMR21_XPRO

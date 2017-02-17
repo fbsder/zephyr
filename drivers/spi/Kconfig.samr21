@@ -1,0 +1,677 @@
+
+#
+# PortPin = (function << 8) + (port << 5) + (pin)
+#
+
+menuconfig SPI_SAMR21
+	bool
+	prompt "Atmel SAMR21 SPI controller driver"
+	depends on SPI && SOC_ATMEL_SAMR21
+	default n
+	help
+	  Enable support for Atmel SAMR21 SPI controllers.
+	  If you want to enable GPIO controlled chip selection support,
+	  	 switch on GPIO module 
+	
+if SPI_SAMR21
+
+menuconfig SPI_0
+	bool "SPI port 0"
+	default n
+	help
+	  Enable SPI controller port 0.	
+
+if SPI_0
+
+config SPI_0_BAUDRATE
+	int "SPI port 0 baud rate"
+	default 5000000
+
+config SPI_0_NAME
+	string "SPI port 0 device name"
+	default "SPI_0"
+	
+config AT_SPI_0_CS_GPIO
+	bool "SPI port CS pin is controlled via a GPIO port" if SPI_CS_GPIO
+	select GPIO_ATMEL_SAMR21_PORT
+	default n
+
+config SPI_0_IRQ_PRI
+	int "SPI 0 interrupt priority"
+	default 3
+
+config SPI_0_LOOPBACK_MODE
+	bool "SPI 0 loop back mode"
+	default n
+	
+config SPI_0_PORT_GROUP
+	int "SPI 0 group mux: DO SCK SLAVE"
+	range 0 3
+	help
+	  0: DO:PAD[0] SCK:PAD[1] SLAVE:PAD[2]
+	  1: DO:PAD[2] SCK:PAD[3] SLAVE:PAD[1]
+	  2: DO:PAD[3] SCK:PAD[1] SLAVE:PAD[2]
+	  3: DO:PAD[0] SCK:PAD[3] SLAVE:PAD[1]
+	  
+config SPI_0_PORT_GROUP_DIPIN
+	int "SPI 0 Pin mux: DI" if !SPI_0_LOOPBACK_MODE
+	range 0 0 if (SPI_0_LOOPBACK_MODE && (SPI_0_PORT_GROUP = 0 || SPI_0_PORT_GROUP = 3))
+	default 0 if (SPI_0_LOOPBACK_MODE && (SPI_0_PORT_GROUP = 0 || SPI_0_PORT_GROUP = 3))
+	range 2 2 if (SPI_0_LOOPBACK_MODE && SPI_0_PORT_GROUP = 1)
+	range 3 3 if (SPI_0_LOOPBACK_MODE && SPI_0_PORT_GROUP = 2)
+	range 3 3 if (SPI_0_PORT_GROUP = 0)
+	range 0 0 if (SPI_0_PORT_GROUP = 1 || SPI_0_PORT_GROUP = 2)
+	default 0 if (SPI_0_PORT_GROUP = 1 || SPI_0_PORT_GROUP = 2)
+	range 2 2 if (SPI_0_PORT_GROUP = 3)
+	help
+	  0: DI:PAD[0]
+	  1: DI:PAD[1]
+	  2: DI:PAD[2]
+	  3: DI:PAD[3]
+
+choice
+	prompt "SPI 0 PAD0"
+	config SPI_0_PAD0_PA04
+        bool "PA04"
+    config SPI_0_PAD0_PA08
+        bool "PA08"
+endchoice
+config SPI_0_PAD0_PORTPIN
+	hex
+	range 0x304 0x304 if SPI_0_PAD0_PA04
+	default 0x304 if SPI_0_PAD0_PA04
+	range 0x208 0x208 if SPI_0_PAD0_PA08
+	default 0x208 if SPI_0_PAD0_PA08
+
+choice
+	prompt "SPI 0 PAD1"
+	config SPI_0_PAD1_PA05
+        bool "PA05"
+    config SPI_0_PAD1_PA09
+        bool "PA09"
+endchoice
+config SPI_0_PAD1_PORTPIN
+	hex
+	range 0x305 0x305 if SPI_0_PAD1_PA05
+	default 0x305 if SPI_0_PAD1_PA05
+	range 0x209 0x209 if SPI_0_PAD1_PA09
+	default 0x209 if SPI_0_PAD1_PA09
+	
+config SPI_0_PAD2_PORTPIN
+	hex
+	default 0x306
+	
+config SPI_0_PAD3_PORTPIN
+	hex
+	default 0x307
+
+config AT_SPI_0_CS_PORT
+	int "The GPIO Port which is used to control CS" if AT_SPI_0_CS_GPIO
+	range -1 2
+	default -1
+	
+config AT_SPI_0_CS_PIN
+	int "The GPIO Pin which is used to act as a CS pin" if AT_SPI_0_CS_GPIO
+	range -1 31
+	default -1
+	
+endif # SPI_0
+	
+menuconfig SPI_1
+	bool "SPI port 1"
+	default n
+	help
+	  Enable SPI controller port 1.	
+
+if SPI_1
+
+config SPI_1_BAUDRATE
+	int "SPI port 1 baud rate"
+	default 5000000
+
+config SPI_1_NAME
+	string "SPI port 1 device name"
+	default "SPI_1"
+	
+config AT_SPI_1_CS_GPIO
+	bool "SPI port CS pin is controlled via a GPIO port" if SPI_CS_GPIO
+	select GPIO_ATMEL_SAMR21_PORT
+	default n
+	
+config SPI_1_IRQ_PRI
+	int "SPI 1 interrupt priority"
+	default 3
+	
+config SPI_1_LOOPBACK_MODE
+	bool "SPI 1 loop back mode"
+	default n
+	
+config SPI_1_PORT_GROUP
+	int "SPI 1 group mux: DO SCK SLAVE"
+	range 0 3
+	help
+	  0: DO:PAD[0] SCK:PAD[1] SLAVE:PAD[2]
+	  1: DO:PAD[2] SCK:PAD[3] SLAVE:PAD[1]
+	  2: DO:PAD[3] SCK:PAD[1] SLAVE:PAD[2]
+	  3: DO:PAD[0] SCK:PAD[3] SLAVE:PAD[1]
+	  
+config SPI_1_PORT_GROUP_DIPIN
+	int "SPI 1 Pin mux: DI" if !SPI_1_LOOPBACK_MODE
+	range 0 0 if (SPI_1_LOOPBACK_MODE && (SPI_1_PORT_GROUP = 0 || SPI_1_PORT_GROUP = 3))
+	default 0 if (SPI_1_LOOPBACK_MODE && (SPI_1_PORT_GROUP = 0 || SPI_1_PORT_GROUP = 3))
+	range 2 2 if (SPI_1_LOOPBACK_MODE && SPI_1_PORT_GROUP = 1)
+	range 3 3 if (SPI_1_LOOPBACK_MODE && SPI_1_PORT_GROUP = 2)
+	range 3 3 if (SPI_1_PORT_GROUP = 0)
+	range 0 0 if (SPI_1_PORT_GROUP = 1 || SPI_1_PORT_GROUP = 2)
+	default 0 if (SPI_1_PORT_GROUP = 1 || SPI_1_PORT_GROUP = 2)
+	range 2 2 if (SPI_1_PORT_GROUP = 3)
+	help
+	  0: DI:PAD[0]
+	  1: DI:PAD[1]
+	  2: DI:PAD[2]
+	  3: DI:PAD[3]
+
+choice
+	prompt "SPI 1 PAD0"
+	config SPI_1_PAD0_PA00
+        bool "PA00"
+    config SPI_1_PAD0_PA16
+        bool "PA16"
+endchoice
+config SPI_1_PAD0_PORTPIN
+	hex
+	range 0x300 0x300 if SPI_1_PAD0_PA00
+	default 0x300 if SPI_1_PAD0_PA00
+	range 0x210 0x210 if SPI_1_PAD0_PA16
+	default 0x210 if SPI_1_PAD0_PA16
+
+choice
+	prompt "SPI 1 PAD1"
+	config SPI_1_PAD1_PA01
+        bool "PA01"
+    config SPI_1_PAD1_PA17
+        bool "PA17"
+endchoice
+config SPI_1_PAD1_PORTPIN
+	hex
+	range 0x301 0x301 if SPI_1_PAD1_PA01
+	default 0x301 if SPI_1_PAD1_PA01
+	range 0x211 0x211 if SPI_1_PAD1_PA17
+	default 0x211 if SPI_1_PAD1_PA17
+
+choice
+	prompt "SPI 1 PAD2"
+	config SPI_1_PAD2_PA18
+        bool "PA18"
+    config SPI_1_PAD2_PA30
+        bool "PA30"
+endchoice
+config SPI_1_PAD2_PORTPIN
+	hex
+	range 0x212 0x212 if SPI_1_PAD2_PA18
+	default 0x212 if SPI_1_PAD2_PA18
+	range 0x31e 0x31e if SPI_1_PAD2_PA30
+	default 0x31e if SPI_1_PAD2_PA30
+
+choice
+	prompt "SPI 1 PAD3"
+	config SPI_1_PAD3_PA19
+        bool "PA19"
+    config SPI_1_PAD3_PA31
+        bool "PA31"
+endchoice
+config SPI_1_PAD3_PORTPIN
+	hex
+	range 0x213 0x213 if SPI_1_PAD3_PA19
+	default 0x213 if SPI_1_PAD3_PA19
+	range 0x31f 0x31f if SPI_1_PAD3_PA31
+	default 0x31f if SPI_1_PAD3_PA31
+
+config AT_SPI_1_CS_PORT
+	int "The GPIO Port which is used to control CS" if AT_SPI_1_CS_GPIO
+	range -1 2
+	default -1
+	
+config AT_SPI_1_CS_PIN
+	int "The GPIO Pin which is used to act as a CS pin" if AT_SPI_1_CS_GPIO
+	range -1 31
+	default -1
+	
+endif # SPI_1
+
+menuconfig SPI_2
+	bool "SPI port 2"
+	default n
+	help
+	  Enable SPI controller port 2.	
+	  
+if SPI_2
+
+config SPI_2_BAUDRATE
+	int "SPI port 2 baud rate"
+	default 5000000
+
+config SPI_2_NAME
+	string "SPI port 2 device name"
+	default "SPI_2"
+
+config AT_SPI_2_CS_GPIO
+	bool "SPI port CS pin is controlled via a GPIO port" if SPI_CS_GPIO
+	select GPIO_ATMEL_SAMR21_PORT
+	default n
+	
+config SPI_2_IRQ_PRI
+	int "SPI 2 interrupt priority"
+	default 3
+
+config SPI_2_LOOPBACK_MODE
+	bool "SPI 2 loop back mode"
+	default n
+	
+config SPI_2_PORT_GROUP
+	int "SPI 2 group mux: DO SCK SLAVE"
+	range 0 3
+	help
+	  0: DO:PAD[0] SCK:PAD[1] SLAVE:PAD[2]
+	  1: DO:PAD[2] SCK:PAD[3] SLAVE:PAD[1]
+	  2: DO:PAD[3] SCK:PAD[1] SLAVE:PAD[2]
+	  3: DO:PAD[0] SCK:PAD[3] SLAVE:PAD[1]
+	  
+config SPI_2_PORT_GROUP_DIPIN
+	int "SPI 2 Pin mux: DI" if !SPI_2_LOOPBACK_MODE
+	range 0 0 if (SPI_2_LOOPBACK_MODE && (SPI_2_PORT_GROUP = 0 || SPI_2_PORT_GROUP = 3))
+	default 0 if (SPI_2_LOOPBACK_MODE && (SPI_2_PORT_GROUP = 0 || SPI_2_PORT_GROUP = 3))
+	range 2 2 if (SPI_2_LOOPBACK_MODE && SPI_2_PORT_GROUP = 1)
+	range 3 3 if (SPI_2_LOOPBACK_MODE && SPI_2_PORT_GROUP = 2)
+	range 3 3 if (SPI_2_PORT_GROUP = 0)
+	range 0 0 if (SPI_2_PORT_GROUP = 1 || SPI_2_PORT_GROUP = 2)
+	default 0 if (SPI_2_PORT_GROUP = 1 || SPI_2_PORT_GROUP = 2)
+	range 2 2 if (SPI_2_PORT_GROUP = 3)
+	help
+	  0: DI:PAD[0]
+	  1: DI:PAD[1]
+	  2: DI:PAD[2]
+	  3: DI:PAD[3]
+
+choice
+	prompt "SPI 2 PAD0"
+	config SPI_2_PAD0_PA08
+        bool "PA08"
+    config SPI_2_PAD0_PA12
+        bool "PA12"
+endchoice
+config SPI_2_PAD0_PORTPIN
+	hex
+	range 0x308 0x308 if SPI_2_PAD0_PA08
+	default 0x308 if SPI_2_PAD0_PA08
+	range 0x20c 0x20c if SPI_2_PAD0_PA12
+	default 0x20c if SPI_2_PAD0_PA12
+
+choice
+	prompt "SPI 2 PAD1"
+	config SPI_2_PAD1_PA09
+        bool "PA01"
+    config SPI_2_PAD1_PA13
+        bool "PA17"
+endchoice
+config SPI_2_PAD1_PORTPIN
+	hex
+	range 0x309 0x309 if SPI_2_PAD1_PA09
+	default 0x309 if SPI_2_PAD1_PA09
+	range 0x20d 0x20d if SPI_2_PAD1_PA13
+	default 0x20d if SPI_2_PAD1_PA13
+
+config SPI_2_PAD2_PORTPIN
+	hex
+	default 0x20e
+	
+config SPI_2_PAD3_PORTPIN
+	hex
+	default 0x20f
+
+config AT_SPI_2_CS_PORT
+	int "The GPIO Port which is used to control CS" if AT_SPI_2_CS_GPIO
+	range -1 2
+	default -1
+	
+config AT_SPI_2_CS_PIN
+	int "The GPIO Pin which is used to act as a CS pin" if AT_SPI_2_CS_GPIO
+	range -1 31
+	default -1
+	
+endif # SPI_2
+
+menuconfig SPI_3
+	bool "SPI port 3"
+	default n
+	help
+	  Enable SPI controller port 3.	
+	  
+if SPI_3
+
+config SPI_3_BAUDRATE
+	int "SPI port 3 baud rate"
+	default 5000000
+
+config SPI_3_NAME
+	string "SPI port 3 device name"
+	default "SPI_3"
+
+config AT_SPI_3_CS_GPIO
+	bool "SPI port CS pin is controlled via a GPIO port" if SPI_CS_GPIO
+	select GPIO_ATMEL_SAMR21_PORT
+	default n
+	
+config SPI_3_IRQ_PRI
+	int "SPI 3 interrupt priority"
+	default 3
+
+config SPI_3_LOOPBACK_MODE
+	bool "SPI 3 loop back mode"
+	default n
+	
+config SPI_3_PORT_GROUP
+	int "SPI 3 group mux: DO SCK SLAVE"
+	range 0 3
+	help
+	  0: DO:PAD[0] SCK:PAD[1] SLAVE:PAD[2]
+	  1: DO:PAD[2] SCK:PAD[3] SLAVE:PAD[1]
+	  2: DO:PAD[3] SCK:PAD[1] SLAVE:PAD[2]
+	  3: DO:PAD[0] SCK:PAD[3] SLAVE:PAD[1]
+	  
+config SPI_3_PORT_GROUP_DIPIN
+	int "SPI 3 Pin mux: DI" if !SPI_3_LOOPBACK_MODE
+	range 0 0 if (SPI_3_LOOPBACK_MODE && (SPI_3_PORT_GROUP = 0 || SPI_3_PORT_GROUP = 3))
+	default 0 if (SPI_3_LOOPBACK_MODE && (SPI_3_PORT_GROUP = 0 || SPI_3_PORT_GROUP = 3))
+	range 2 2 if (SPI_3_LOOPBACK_MODE && SPI_3_PORT_GROUP = 1)
+	range 3 3 if (SPI_3_LOOPBACK_MODE && SPI_3_PORT_GROUP = 2)
+	range 3 3 if (SPI_3_PORT_GROUP = 0)
+	range 0 0 if (SPI_3_PORT_GROUP = 1 || SPI_3_PORT_GROUP = 2)
+	default 0 if (SPI_3_PORT_GROUP = 1 || SPI_3_PORT_GROUP = 2)
+	range 2 2 if (SPI_3_PORT_GROUP = 3)
+	help
+	  0: DI:PAD[0]
+	  1: DI:PAD[1]
+	  2: DI:PAD[2]
+	  3: DI:PAD[3]
+
+choice
+	prompt "SPI 3 PAD0"
+	config SPI_3_PAD0_PA16
+        bool "PA16"
+    config SPI_3_PAD0_PA22
+        bool "PA22"
+    config SPI_3_PAD0_PA27
+        bool "PA27"
+endchoice
+config SPI_3_PAD0_PORTPIN
+	hex
+	range 0x310 0x310 if SPI_3_PAD0_PA16
+	default 0x310 if SPI_3_PAD0_PA16
+	range 0x216 0x216 if SPI_3_PAD0_PA22
+	default 0x216 if SPI_3_PAD0_PA22
+	range 0x51b 0x51b if SPI_3_PAD0_PA27
+	default 0x51b if SPI_3_PAD0_PA27
+	
+choice
+	prompt "SPI 3 PAD1"
+	config SPI_3_PAD1_PA17
+        bool "PA17"
+    config SPI_3_PAD1_PA23
+        bool "PA23"
+    config SPI_3_PAD1_PA28
+        bool "PA28"
+endchoice
+config SPI_3_PAD1_PORTPIN
+	hex
+	range 0x311 0x311 if SPI_3_PAD1_PA17
+	default 0x311 if SPI_3_PAD1_PA17
+	range 0x217 0x217 if SPI_3_PAD1_PA23
+	default 0x217 if SPI_3_PAD1_PA23
+	range 0x51c 0x51c if SPI_3_PAD1_PA28
+	default 0x51c if SPI_3_PAD1_PA28
+
+choice
+	prompt "SPI 3 PAD2"
+	config SPI_3_PAD2_PA18
+        bool "PA18"
+    config SPI_3_PAD2_PA24
+        bool "PA24"
+endchoice
+config SPI_3_PAD2_PORTPIN
+	hex
+	range 0x312 0x312 if SPI_3_PAD2_PA18
+	default 0x312 if SPI_3_PAD2_PA18
+	range 0x218 0x218 if SPI_3_PAD2_PA24
+	default 0x218 if SPI_3_PAD2_PA24
+
+choice
+	prompt "SPI 3 PAD3"
+	config SPI_3_PAD3_PA19
+        bool "PA19"
+    config SPI_3_PAD3_PA25
+        bool "PA25"
+endchoice
+config SPI_3_PAD3_PORTPIN
+	hex
+	range 0x313 0x313 if SPI_3_PAD3_PA19
+	default 0x313 if SPI_3_PAD3_PA19
+	range 0x219 0x219 if SPI_3_PAD3_PA25
+	default 0x219 if SPI_3_PAD3_PA25
+
+config AT_SPI_3_CS_PORT
+	int "The GPIO Port which is used to control CS" if AT_SPI_3_CS_GPIO
+	range -1 2
+	default -1
+	
+config AT_SPI_3_CS_PIN
+	int "The GPIO Pin which is used to act as a CS pin" if AT_SPI_3_CS_GPIO
+	range -1 31
+	default -1
+	
+endif # SPI_3
+
+menuconfig SPI_4
+	bool 
+	prompt "SPI port 4" if IEEE802154_AT86RF233
+	default y if IEEE802154_AT86RF233
+	help
+	  Enable SPI controller port 4.	
+
+if SPI_4
+
+config SPI_4_BAUDRATE
+	int "SPI port 4 baud rate"
+	default 5000000
+
+config SPI_4_NAME
+	string "SPI port 4 device name"
+	default "SPI_4"
+
+config AT_SPI_4_CS_GPIO
+	bool "SPI port CS pin is controlled via a GPIO port" if SPI_CS_GPIO
+	select GPIO_ATMEL_SAMR21_PORT
+	default n
+	
+config SPI_4_IRQ_PRI
+	int "SPI 4 interrupt priority"
+	default 3
+
+config SPI_4_LOOPBACK_MODE
+	bool "SPI 4 loop back mode"
+	default n
+	
+config SPI_4_PORT_GROUP
+	int "SPI 4 group mux: DO SCK SLAVE"
+	range 0 3
+	default 1
+	help
+	  0: DO:PAD[0] SCK:PAD[1] SLAVE:PAD[2]
+	  1: DO:PAD[2] SCK:PAD[3] SLAVE:PAD[1]
+	  2: DO:PAD[3] SCK:PAD[1] SLAVE:PAD[2]
+	  3: DO:PAD[0] SCK:PAD[3] SLAVE:PAD[1]
+	  
+config SPI_4_PORT_GROUP_DIPIN
+	int "SPI 4 Pin mux: DI" if !SPI_4_LOOPBACK_MODE
+	range 0 0 if (SPI_4_LOOPBACK_MODE && (SPI_4_PORT_GROUP = 0 || SPI_4_PORT_GROUP = 3))
+	default 0 if (SPI_4_LOOPBACK_MODE && (SPI_4_PORT_GROUP = 0 || SPI_4_PORT_GROUP = 3))
+	range 2 2 if (SPI_4_LOOPBACK_MODE && SPI_4_PORT_GROUP = 1)
+	range 3 3 if (SPI_4_LOOPBACK_MODE && SPI_4_PORT_GROUP = 2)
+	range 3 3 if (SPI_4_PORT_GROUP = 0)
+	range 0 0 if (SPI_4_PORT_GROUP = 1 || SPI_4_PORT_GROUP = 2)
+	default 0 if (SPI_4_PORT_GROUP = 1 || SPI_4_PORT_GROUP = 2)
+	range 2 2 if (SPI_4_PORT_GROUP = 3)
+	help
+	  0: DI:PAD[0]
+	  1: DI:PAD[1]
+	  2: DI:PAD[2]
+	  3: DI:PAD[3]
+
+config SPI_4_PAD0_PORTPIN
+	hex
+	default 0x553
+config SPI_4_PAD1_PORTPIN
+	hex
+	default 0x53f
+config SPI_4_PAD2_PORTPIN
+	hex
+	default 0x53e
+config SPI_4_PAD3_PORTPIN
+	hex
+	default 0x552
+
+config AT_SPI_4_CS_PORT
+	int "The GPIO Port which is used to control CS" if AT_SPI_4_CS_GPIO
+	range -1 2
+	default -1
+	
+config AT_SPI_4_CS_PIN
+	int "The GPIO Pin which is used to act as a CS pin" if AT_SPI_4_CS_GPIO
+	range -1 31
+	default -1
+	
+endif # SPI_4
+
+menuconfig SPI_5
+	bool "SPI port 5"
+	default n
+	help
+	  Enable SPI controller port 5.	
+	  
+if SPI_5
+
+config SPI_5_BAUDRATE
+	int "SPI port 5 baud rate"
+	default 5000000
+
+config SPI_5_NAME
+	string "SPI port 5 device name"
+	default "SPI_5"
+
+config AT_SPI_5_CS_GPIO
+	bool "SPI port CS pin is controlled via a GPIO port" if SPI_CS_GPIO
+	select GPIO_ATMEL_SAMR21_PORT
+	default n
+	
+config SPI_5_IRQ_PRI
+	int "SPI 5 interrupt priority"
+	default 3
+
+config SPI_5_LOOPBACK_MODE
+	bool "SPI 5 loop back mode"
+	default n
+	
+config SPI_5_PORT_GROUP
+	int "SPI 5 group mux: DO SCK SLAVE"
+	range 0 3
+	help
+	  0: DO:PAD[0] SCK:PAD[1] SLAVE:PAD[2]
+	  1: DO:PAD[2] SCK:PAD[3] SLAVE:PAD[1]
+	  2: DO:PAD[3] SCK:PAD[1] SLAVE:PAD[2]
+	  3: DO:PAD[0] SCK:PAD[3] SLAVE:PAD[1]
+	  
+config SPI_5_PORT_GROUP_DIPIN
+	int "SPI 5 Pin mux: DI" if !SPI_5_LOOPBACK_MODE
+	range 0 0 if (SPI_5_LOOPBACK_MODE && (SPI_5_PORT_GROUP = 0 || SPI_5_PORT_GROUP = 3))
+	default 0 if (SPI_5_LOOPBACK_MODE && (SPI_5_PORT_GROUP = 0 || SPI_5_PORT_GROUP = 3))
+	range 2 2 if (SPI_5_LOOPBACK_MODE && SPI_5_PORT_GROUP = 1)
+	range 3 3 if (SPI_5_LOOPBACK_MODE && SPI_5_PORT_GROUP = 2)
+	range 3 3 if (SPI_5_PORT_GROUP = 0)
+	range 0 0 if (SPI_5_PORT_GROUP = 1 || SPI_5_PORT_GROUP = 2)
+	default 0 if (SPI_5_PORT_GROUP = 1 || SPI_5_PORT_GROUP = 2)
+	range 2 2 if (SPI_5_PORT_GROUP = 3)
+	help
+	  0: DI:PAD[0]
+	  1: DI:PAD[1]
+	  2: DI:PAD[2]
+	  3: DI:PAD[3]
+
+choice
+	prompt "SPI 5 PAD0"
+    config SPI_5_PAD0_PA22
+        bool "PA22"
+    config SPI_5_PAD0_PB02
+        bool "PB02"
+endchoice
+config SPI_5_PAD0_PORTPIN
+	hex
+	range 0x316 0x316 if SPI_5_PAD0_PA22
+	default 0x316 if SPI_5_PAD0_PA22
+	range 0x322 0x322 if SPI_5_PAD0_PB02
+	default 0x322 if SPI_5_PAD0_PB02
+
+choice
+	prompt "SPI 5 PAD1"
+    config SPI_5_PAD1_PA23
+        bool "PA23"
+    config SPI_5_PAD1_PB03
+        bool "PB03"
+endchoice
+config SPI_5_PAD1_PORTPIN
+	hex
+	range 0x317 0x317 if SPI_5_PAD1_PA23
+	default 0x317 if SPI_5_PAD1_PA23
+	range 0x323 0x323 if SPI_5_PAD1_PB03
+	default 0x323 if SPI_5_PAD1_PB03
+
+choice
+	prompt "SPI 5 PAD2"
+    config SPI_5_PAD2_PA24
+        bool "PA24"
+    config SPI_5_PAD2_PB22
+        bool "PB22"
+endchoice
+config SPI_5_PAD2_PORTPIN
+	hex
+	range 0x318 0x318 if SPI_5_PAD2_PA24
+	default 0x318 if SPI_5_PAD2_PA24
+	range 0x336 0x336 if SPI_5_PAD2_PB22
+	default 0x336 if SPI_5_PAD2_PB22
+
+choice
+	prompt "SPI 5 PAD3"
+    config SPI_5_PAD3_PA25
+        bool "PA25"
+    config SPI_5_PAD3_PB23
+        bool "PB23"
+endchoice
+config SPI_5_PAD3_PORTPIN
+	hex
+	range 0x319 0x319 if SPI_5_PAD3_PA25
+	default 0x319 if SPI_5_PAD3_PA25
+	range 0x337 0x337 if SPI_5_PAD3_PB23
+	default 0x337 if SPI_5_PAD3_PB23
+
+config AT_SPI_5_CS_PORT
+	int "The GPIO Port which is used to control CS" if AT_SPI_5_CS_GPIO
+	range -1 2
+	default -1
+	
+config AT_SPI_5_CS_PIN
+	int "The GPIO Pin which is used to act as a CS pin" if AT_SPI_5_CS_GPIO
+	range -1 31
+	default -1
+	
+endif # SPI_5
+
+endif # SPI_SAMR21

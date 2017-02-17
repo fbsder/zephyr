@@ -1,0 +1,6 @@
+# Kconfig - ATMEL SAMR21 XPRO
+#
+
+config  BOARD_SAMR21_XPRO
+	bool "ATMEL SAMR21 XPRO"
+	depends on SOC_ATMEL_SAMR21

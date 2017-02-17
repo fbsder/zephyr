@@ -1,0 +1,35 @@
+# Kconfig.at86rf233 - ATMEL AT86RF233 configuration options
+#
+
+menuconfig IEEE802154_AT86RF233
+	bool "ATMEL AT86RF233 Driver support"
+	depends on NETWORKING && SPI
+	select NET_L2_IEEE802154
+	default n
+
+if IEEE802154_AT86RF233
+
+config IEEE802154_AT86RF233_DRV_NAME
+	string "Atmel AT86RF233 Driver's name"
+	default "at86rf233"
+	help
+	This option sets the driver name
+	
+config IEEE802154_AT86RF233_RX_STACK_SIZE
+	int "Driver's internal rx thread stack size"
+	default 800
+	help
+	This option sets the driver's stack size for its internal rx thread.
+	The default value should be sufficient, but in case it prooves to be
+	a too little one, this option makes it easy to play with the size.
+
+config IEEE802154_AT86RF233_INIT_PRIO
+	int "AT86RF233 intialization priority"
+	default 80
+	help
+	Set the initialization priority number. Do not mess with it unless
+	you know what you are doing. Beware at86rf233 requires gpio and spi to
+	be ready first (and sometime gpio should be the very first as spi
+	might need it too). And of course it has to start before the net stack.
+	
+endif

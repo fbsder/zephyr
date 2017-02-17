@@ -7,6 +7,8 @@ include $(srctree)/ext/hal/cmsis/Makefile
 
 include $(srctree)/ext/hal/nordic/Makefile
 
+include $(srctree)/ext/hal/atmel/samr21/Makefile
+
 include $(srctree)/ext/hal/nxp/mcux/Makefile
 
 include $(srctree)/ext/hal/qmsi/Makefile

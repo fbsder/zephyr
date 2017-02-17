@@ -16,6 +16,8 @@ source "ext/hal/cmsis/Kconfig"
 
 source "ext/hal/nordic/Kconfig"
 
+source "ext/hal/atmel/samr21/Kconfig"
+
 source "ext/hal/nxp/mcux/Kconfig"
 
 source "ext/hal/qmsi/Kconfig"

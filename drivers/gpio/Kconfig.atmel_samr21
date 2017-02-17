@@ -1,0 +1,41 @@
+# Kconfig.atmel_sam3 - Atmel SAM3 GPIO configuration options
+#
+#
+# Copyright (c) 2016 Intel Corporation
+#
+# SPDX-License-Identifier: Apache-2.0
+#
+
+menuconfig GPIO_ATMEL_SAMR21
+	bool "Atmel SAMR21 PIO Controllers"
+	depends on GPIO && SOC_ATMEL_SAMR21
+	default n
+	help
+	  Enable config options to support the PIO controllers
+	  on Atmel SAMR21 family processors.
+
+	  Says n if not sure.
+
+if GPIO_ATMEL_SAMR21
+
+config GPIO_ATMEL_SAMR21_PORT
+	bool "Enable driver for Atmel SAMR21 PIO Port"
+	default n
+	help
+	  Build the driver to utilize PORT controller Port.
+
+config GPIO_ATMEL_SAMR21_PORT_DEV_NAME
+	string "Device name for Port"
+	depends on GPIO_ATMEL_SAMR21_PORT
+	default "PIO_PORT"
+	help
+	  Device name for Port.
+
+config GPIO_ATMEL_SAMR21_PORT_IRQ_PRI
+	int "Interrupt Priority for Port"
+	depends on GPIO_ATMEL_SAMR21_PORT
+	default 3
+	help
+	  Interrupt priority for Port.
+
+endif # GPIO_ATMEL_SAMR21

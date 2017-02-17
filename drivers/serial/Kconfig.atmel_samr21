@@ -1,0 +1,34 @@
+menuconfig UART_ATMEL_SAMR21
+	bool "Atmel SAMR21 family processor UART driver"
+	default n
+	select SERIAL_HAS_DRIVER
+	depends on SOC_ATMEL_SAMR21
+	help
+	This option enables the UART driver for Atmel SAMR21
+	family processors. Note that there is only one
+	UART controller on SAMR21. It has only two wires
+	for RX and TX, and does not have other pins
+	(such as CTS and RTS).
+	
+if UART_ATMEL_SAMR21
+
+config UART_ATMEL_SAMR21_NAME
+	string "Device Name for Atmel SAMR21 UART"
+	default "UART_0"
+	help
+	  This is the device name for UART, and is included in the device
+	  struct.
+
+config UART_ATMEL_SAMR21_IRQ_PRI
+	int "Atmel SAMR21 UART Interrupt Priority"
+	default 0
+	help
+	  The interrupt priority for UART port.
+
+config UART_ATMEL_SAMR21_BAUD_RATE
+	int "Atmel SAMR21 UART Baud Rate"
+	default 0
+	help
+	  The baud rate for UART port to be set to at boot.
+
+endif # UART_ATMEL_SAMR21

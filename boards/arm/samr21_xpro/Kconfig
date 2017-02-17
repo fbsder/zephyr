@@ -1,0 +1,6 @@
+# Kconfig - ATMEL SAMR21 XPRO configuration
+#
+
+if BOARD_SAMR21_XPRO
+
+endif # BOARD_SAMR21_XPRO

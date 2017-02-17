@@ -1,0 +1,2 @@
+
+obj- += dummy.o
