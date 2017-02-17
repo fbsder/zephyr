@@ -1,0 +1,12 @@
+# Makefile - ieee802154 example that is used in testing
+
+#
+# Copyright (c) 2016 Intel Corporation
+#
+# SPDX-License-Identifier: Apache-2.0
+#
+
+BOARD ?= samr21_xpro
+CONF_FILE ?= prj.conf
+
+include $(ZEPHYR_BASE)/Makefile.inc
