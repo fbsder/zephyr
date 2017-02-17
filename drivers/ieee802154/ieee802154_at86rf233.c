@@ -400,7 +400,7 @@ static void at86rf233_rx_thread(void *arg1, void *unused1, void *unused2)
 		at86rf233_sram_read(spi, 0, &phr, sizeof phr);
 		pkt_len = (phr & 0x7f) - AT86RF233_FCS_LENGTH;
 
-		buf = net_nbuf_get_reserve_rx(0);
+		buf = net_nbuf_get_reserve_rx(0, K_NO_WAIT);
 		if (!buf) {
 			SYS_LOG_ERR("No buf available");
 			goto out;
@@ -410,9 +410,9 @@ static void at86rf233_rx_thread(void *arg1, void *unused1, void *unused2)
 		/**
 		 * Reserve 1 byte for length
 		 */
-		pkt_buf = net_nbuf_get_reserve_data(1);
+		pkt_buf = net_nbuf_get_reserve_data(1, K_NO_WAIT);
 #else
-		pkt_buf = net_nbuf_get_reserve_data(0);
+		pkt_buf = net_nbuf_get_reserve_data(0, K_NO_WAIT);
 #endif
 		if (!pkt_buf) {
 			SYS_LOG_ERR("No pkt_buf available");

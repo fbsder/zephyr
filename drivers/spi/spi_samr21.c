@@ -235,7 +235,7 @@ static int spi_samr21_transceive(struct device *dev,
 	volatile SercomSpi *spi = SPI_STRUCT(dev);
 	struct spi_samr21_data *samr21_data = DEV_DATA(dev);
 	struct spi_samr21_config *cfg = DEV_CFG(dev);
-	int rc;
+	int rc = 0;
 
 	samr21_data->tx_cnt = samr21_data->rx_cnt = 0;
 	samr21_data->rx_buf = rx_buf;

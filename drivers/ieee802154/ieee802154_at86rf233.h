@@ -35,7 +35,7 @@ struct at86rf233_context {
 	/*********TX + CCA*********/
 	atomic_t tx;
 	/************RX************/
-	char __stack at86rf233_rx_stack[CONFIG_ATMEL_AT86RF233_RX_STACK_SIZE];
+	char __stack at86rf233_rx_stack[CONFIG_IEEE802154_AT86RF233_RX_STACK_SIZE];
 	struct k_sem rx_lock;
 	uint8_t lqi;
 	uint8_t rssi;
