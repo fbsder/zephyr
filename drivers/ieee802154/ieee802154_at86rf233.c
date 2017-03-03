@@ -735,7 +735,7 @@ static void at86rf233_iface_init(struct net_if *iface)
 
 	SYS_LOG_DBG("");
 
-	net_if_set_link_addr(iface, mac, 8);
+	net_if_set_link_addr(iface, mac, 8, NET_LINK_IEEE802154);
 
 	at86rf233->iface = iface;
 
