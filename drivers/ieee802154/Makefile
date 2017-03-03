@@ -3,8 +3,5 @@ obj-$(CONFIG_IEEE802154_CC2520_RAW) += ieee802154_cc2520.o
 obj-$(CONFIG_IEEE802154_UPIPE) += ieee802154_uart_pipe.o
 obj-$(CONFIG_IEEE802154_MCR20A) += ieee802154_mcr20a.o
 obj-$(CONFIG_IEEE802154_MCR20A_RAW) += ieee802154_mcr20a.o
-<<<<<<< HEAD
-obj-$(CONFIG_IEEE802154_AT86RF233) += ieee802154_at86rf233.o
-=======
 obj-$(CONFIG_IEEE802154_NRF5) += ieee802154_nrf5.o
->>>>>>> upstream/master
+obj-$(CONFIG_IEEE802154_AT86RF233) += ieee802154_at86rf233.o

@@ -58,11 +58,9 @@ source "drivers/ieee802154/Kconfig.cc2520"
 
 source "drivers/ieee802154/Kconfig.mcr20a"
 
-<<<<<<< HEAD
-source "drivers/ieee802154/Kconfig.at86rf233"
-=======
 source "drivers/ieee802154/Kconfig.nrf5"
->>>>>>> upstream/master
+
+source "drivers/ieee802154/Kconfig.at86rf233"
 
 menuconfig IEEE802154_UPIPE
 	bool "UART PIPE fake radio driver support for QEMU"
