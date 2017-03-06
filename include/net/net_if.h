@@ -274,6 +274,9 @@ struct net_if {
 		/** IP address Renewal time */
 		uint32_t renewal_time;
 
+		/** IP address Rebinding time */
+		uint32_t rebinding_time;
+
 		/** Server ID */
 		struct in_addr server_id;
 
@@ -288,13 +291,19 @@ struct net_if {
 
 		/** Number of attempts made for REQUEST and RENEWAL messages */
 		uint8_t attempts;
+
+		/** Timer for DHCPv4 Client requests (DISCOVER,
+		 * REQUEST or RENEWAL)
+		 */
+		struct k_delayed_work timer;
+
+		/** T1 (Renewal) timer */
+		struct k_delayed_work t1_timer;
+
+		/** T2 (Rebinding) timer */
+		struct k_delayed_work t2_timer;
 	} dhcpv4;
 
-	/** Timer for DHCPv4 Client requests (DISCOVER, REQUEST or RENEWAL) */
-	struct k_delayed_work dhcpv4_timeout;
-
-	/** T1 (Renewal) timer */
-	struct k_delayed_work dhcpv4_t1_timer;
 #endif
 } __net_if_align;
 
@@ -1131,6 +1140,12 @@ struct net_if_api {
 	int (*send)(struct net_if *iface, struct net_buf *buf);
 };
 
+#if defined(CONFIG_NET_DHCPV4)
+#define NET_IF_DHCPV4_INIT .dhcpv4.state = NET_DHCPV4_DISABLED,
+#else
+#define NET_IF_DHCPV4_INIT
+#endif
+
 #define NET_IF_GET_NAME(dev_name, sfx) (__net_if_##dev_name##_##sfx)
 #define NET_IF_GET(dev_name, sfx)					\
 	((struct net_if *)&NET_IF_GET_NAME(dev_name, sfx))
@@ -1142,6 +1157,7 @@ struct net_if_api {
 		.l2 = &(NET_L2_GET_NAME(_l2)),				\
 		.l2_data = &(NET_L2_GET_DATA(dev_name, sfx)),		\
 		.mtu = _mtu,						\
+		NET_IF_DHCPV4_INIT					\
 	};								\
 	NET_STACK_INFO_ADDR(TX,						\
 			    dev_name,					\

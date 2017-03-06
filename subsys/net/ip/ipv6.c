@@ -314,7 +314,6 @@ const struct in6_addr *net_ipv6_unspecified_address(void)
 }
 
 struct net_buf *net_ipv6_create_raw(struct net_buf *buf,
-				    uint16_t reserve,
 				    const struct in6_addr *src,
 				    const struct in6_addr *dst,
 				    struct net_if *iface,
@@ -322,7 +321,7 @@ struct net_buf *net_ipv6_create_raw(struct net_buf *buf,
 {
 	struct net_buf *header;
 
-	header = net_nbuf_get_reserve_data(reserve, K_FOREVER);
+	header = net_nbuf_get_frag(buf, K_FOREVER);
 
 	net_buf_frag_insert(buf, header);
 
@@ -364,7 +363,6 @@ struct net_buf *net_ipv6_create(struct net_context *context,
 	}
 
 	return net_ipv6_create_raw(buf,
-				   net_nbuf_ll_reserve(buf),
 				   src,
 				   dst,
 				   net_context_get_iface(context),
@@ -550,7 +548,7 @@ static struct net_buf *update_ll_reserve(struct net_buf *buf,
 
 	while (orig_frag) {
 		if (!room_len) {
-			frag = net_nbuf_get_reserve_data(reserve, K_FOREVER);
+			frag = net_nbuf_get_frag(buf, K_FOREVER);
 
 			net_buf_frag_add(buf, frag);
 
@@ -573,7 +571,7 @@ static struct net_buf *update_ll_reserve(struct net_buf *buf,
 		}
 
 		if (!copy_len) {
-			orig_frag = net_buf_frag_del(NULL, orig_frag);
+			orig_frag = net_nbuf_frag_del(NULL, orig_frag);
 			if (!orig_frag) {
 				break;
 			}
@@ -904,18 +902,17 @@ int net_ipv6_send_na(struct net_if *iface, struct in6_addr *src,
 	struct net_buf *buf, *frag;
 	uint8_t llao_len;
 
-	buf = net_nbuf_get_reserve_tx(0, K_FOREVER);
+	buf = net_nbuf_get_reserve_tx(net_if_get_ll_reserve(iface, dst),
+				      K_FOREVER);
 
 	NET_ASSERT_INFO(buf, "Out of TX buffers");
 
-	frag = net_nbuf_get_reserve_data(net_if_get_ll_reserve(iface, dst),
-					 K_FOREVER);
+	frag = net_nbuf_get_frag(buf, K_FOREVER);
 
 	NET_ASSERT_INFO(frag, "Out of DATA buffers");
 
 	net_buf_frag_add(buf, frag);
 
-	net_nbuf_set_ll_reserve(buf, net_buf_headroom(frag));
 	net_nbuf_set_iface(buf, iface);
 	net_nbuf_set_family(buf, AF_INET6);
 	net_nbuf_set_ip_hdr_len(buf, sizeof(struct net_ipv6_hdr));
@@ -1507,18 +1504,17 @@ int net_ipv6_send_ns(struct net_if *iface,
 	struct net_nbr *nbr;
 	uint8_t llao_len;
 
-	buf = net_nbuf_get_reserve_tx(0, K_FOREVER);
+	buf = net_nbuf_get_reserve_tx(net_if_get_ll_reserve(iface, dst),
+				      K_FOREVER);
 
 	NET_ASSERT_INFO(buf, "Out of TX buffers");
 
-	frag = net_nbuf_get_reserve_data(net_if_get_ll_reserve(iface, dst),
-					 K_FOREVER);
+	frag = net_nbuf_get_frag(buf, K_FOREVER);
 
 	NET_ASSERT_INFO(frag, "Out of DATA buffers");
 
 	net_buf_frag_add(buf, frag);
 
-	net_nbuf_set_ll_reserve(buf, net_buf_headroom(frag));
 	net_nbuf_set_iface(buf, iface);
 	net_nbuf_set_family(buf, AF_INET6);
 	net_nbuf_set_ip_hdr_len(buf, sizeof(struct net_ipv6_hdr));
@@ -1643,15 +1639,13 @@ int net_ipv6_send_rs(struct net_if *iface)
 	bool unspec_src;
 	uint8_t llao_len = 0;
 
-	buf = net_nbuf_get_reserve_tx(0, K_FOREVER);
+	buf = net_nbuf_get_reserve_tx(net_if_get_ll_reserve(iface, NULL),
+				      K_FOREVER);
 
-	frag = net_nbuf_get_reserve_data(
-		net_if_get_ll_reserve(iface, &NET_IPV6_BUF(buf)->dst),
-		K_FOREVER);
+	frag = net_nbuf_get_frag(buf, K_FOREVER);
 
 	net_buf_frag_add(buf, frag);
 
-	net_nbuf_set_ll_reserve(buf, net_buf_headroom(frag));
 	net_nbuf_set_iface(buf, iface);
 	net_nbuf_set_family(buf, AF_INET6);
 	net_nbuf_set_ip_hdr_len(buf, sizeof(struct net_ipv6_hdr));
