@@ -10,4 +10,6 @@ architectures, SoCs and boards.
    :maxdepth: 1
 
    arch.rst
+   board_porting.rst
    application.rst
+   ip-stack-migrate.rst
