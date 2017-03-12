@@ -75,7 +75,12 @@ struct net_if_addr {
  */
 struct net_if_mcast_addr {
 	/** Is this multicast IP address used or not */
-	bool is_used;
+	uint8_t is_used : 1;
+
+	/** Did we join to this group */
+	uint8_t is_joined : 1;
+
+	uint8_t _unused : 6;
 
 	/** IP address */
 	struct net_addr address;
@@ -197,12 +202,6 @@ struct net_if {
 
 	/** Queue for outgoing packets from apps */
 	struct k_fifo tx_queue;
-
-	/** Stack for the TX thread tied to this interface */
-#ifndef CONFIG_NET_TX_STACK_SIZE
-#define CONFIG_NET_TX_STACK_SIZE 1024
-#endif
-	NET_STACK_DEFINE_EMBEDDED(tx_stack, CONFIG_NET_TX_STACK_SIZE);
 
 #if defined(CONFIG_NET_IPV6)
 #define NET_IF_MAX_IPV6_ADDR CONFIG_NET_IF_UNICAST_IPV6_ADDR_COUNT
@@ -630,6 +629,44 @@ bool net_if_ipv6_maddr_rm(struct net_if *iface, const struct in6_addr *addr);
  */
 struct net_if_mcast_addr *net_if_ipv6_maddr_lookup(const struct in6_addr *addr,
 						   struct net_if **iface);
+
+/**
+ * @brief Mark a given multicast address to be joined.
+ *
+ * @param addr IPv6 multicast address
+ */
+static inline void net_if_ipv6_maddr_join(struct net_if_mcast_addr *addr)
+{
+	NET_ASSERT(addr);
+
+	addr->is_joined = true;
+}
+
+/**
+ * @brief Check if given multicast address is joined or not.
+ *
+ * @param addr IPv6 multicast address
+ *
+ * @return True if address is joined, False otherwise.
+ */
+static inline bool net_if_ipv6_maddr_is_joined(struct net_if_mcast_addr *addr)
+{
+	NET_ASSERT(addr);
+
+	return addr->is_joined;
+}
+
+/**
+ * @brief Mark a given multicast address to be left.
+ *
+ * @param addr IPv6 multicast address
+ */
+static inline void net_if_ipv6_maddr_leave(struct net_if_mcast_addr *addr)
+{
+	NET_ASSERT(addr);
+
+	addr->is_joined = false;
+}
 
 /**
  * @brief Check if this IPv6 prefix belongs to this interface
@@ -1147,6 +1184,9 @@ struct net_if_api {
 #endif
 
 #define NET_IF_GET_NAME(dev_name, sfx) (__net_if_##dev_name##_##sfx)
+#define NET_IF_EVENT_GET_NAME(dev_name, sfx)	\
+	(__net_if_event_##dev_name##_##sfx)
+
 #define NET_IF_GET(dev_name, sfx)					\
 	((struct net_if *)&NET_IF_GET_NAME(dev_name, sfx))
 
@@ -1159,12 +1199,9 @@ struct net_if_api {
 		.mtu = _mtu,						\
 		NET_IF_DHCPV4_INIT					\
 	};								\
-	NET_STACK_INFO_ADDR(TX,						\
-			    dev_name,					\
-			    CONFIG_NET_TX_STACK_SIZE,			\
-			    CONFIG_NET_TX_STACK_SIZE,			\
-			    NET_IF_GET(dev_name, sfx)->tx_stack,	\
-			    sfx)
+	static struct k_poll_event					\
+	(NET_IF_EVENT_GET_NAME(dev_name, sfx)) __used			\
+		__attribute__((__section__(".net_if_event.data"))) = {}
 
 
 /* Network device initialization macros */
