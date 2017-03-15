@@ -24,9 +24,13 @@
 
 #define SDP_CHAN(_ch) CONTAINER_OF(_ch, struct bt_sdp, chan.chan)
 
+#define IN_RANGE(val, min, max) (val >= min && val <= max)
+
 #define SDP_DATA_MTU 200
 
 #define SDP_MTU (SDP_DATA_MTU + sizeof(struct bt_sdp_hdr))
+
+#define MAX_NUM_ATT_ID_FILTER 10
 
 #define SDP_SERVICE_HANDLE_BASE 0x10000
 
@@ -35,6 +39,9 @@
 /* 1 byte for the no. of services searched till this response */
 /* 2 bytes for the total no. of matching records */
 #define SDP_SS_CONT_STATE_SIZE 3
+
+/* 1 byte for the no. of attributes searched till this response */
+#define SDP_SA_CONT_STATE_SIZE 1
 
 struct bt_sdp {
 	struct bt_l2cap_br_chan chan;
@@ -75,6 +82,27 @@ enum {
 	BT_SDP_ITER_STOP,
 	BT_SDP_ITER_CONTINUE,
 };
+
+struct select_attrs_data {
+	struct bt_sdp_record        *rec;
+	struct bt_sdp               *sdp;
+	uint32_t                    *filter;
+	uint16_t                     max_att_len;
+	uint8_t                      num_filters;
+};
+
+/* @typedef bt_sdp_attr_func_t
+ *  @brief SDP attribute iterator callback.
+ *
+ *  @param attr Attribute found.
+ *  @param att_idx Index of the found attribute in the attribute database.
+ *  @param user_data Data given.
+ *
+ *  @return BT_SDP_ITER_CONTINUE if should continue to the next attribute
+ *  or BT_SDP_ITER_STOP to stop.
+ */
+typedef uint8_t (*bt_sdp_attr_func_t)(struct bt_sdp_attribute *attr,
+				      uint8_t att_idx, void *user_data);
 
 /* @typedef bt_sdp_svc_func_t
  * @brief SDP service record iterator callback.
@@ -518,14 +546,386 @@ static uint16_t find_services(struct net_buf *buf,
 static uint16_t sdp_svc_search_req(struct bt_sdp *sdp, struct net_buf *buf,
 				   uint16_t tid)
 {
+	struct bt_sdp_svc_rsp *rsp;
+	struct net_buf *resp_buf;
+	struct bt_sdp_record *record;
 	struct bt_sdp_record *matching_recs[BT_SDP_MAX_SERVICES];
-	uint16_t res;
+	uint16_t max_rec_count, total_recs = 0, current_recs = 0, res;
+	uint8_t cont_state_size, cont_state = 0, idx = 0, count = 0;
+	bool pkt_full = false;
 
 	res = find_services(buf, matching_recs);
 	if (res) {
 		/* Error in parsing */
 		return res;
 	}
+
+	if (buf->len < 3) {
+		BT_WARN("Malformed packet");
+		return BT_SDP_INVALID_SYNTAX;
+	}
+
+	max_rec_count = net_buf_pull_be16(buf);
+	cont_state_size = net_buf_pull_u8(buf);
+
+	/* Zero out the matching services beyond max_rec_count */
+	for (idx = 0; idx < num_services; idx++) {
+		if (count == max_rec_count) {
+			matching_recs[idx] = NULL;
+			continue;
+		}
+
+		if (matching_recs[idx]) {
+			count++;
+		}
+	}
+
+	/* We send out only SDP_SS_CONT_STATE_SIZE bytes continuation state in
+	 * responses, so expect only SDP_SS_CONT_STATE_SIZE bytes in requests
+	 */
+	if (cont_state_size) {
+		if (cont_state_size != SDP_SS_CONT_STATE_SIZE) {
+			BT_WARN("Invalid cont state size %u", cont_state_size);
+			return BT_SDP_INVALID_CSTATE;
+		}
+
+		if (buf->len < cont_state_size) {
+			BT_WARN("Malformed packet");
+			return BT_SDP_INVALID_SYNTAX;
+		}
+
+		cont_state = net_buf_pull_u8(buf);
+		/* We include total_recs in the continuation state. We calculate
+		 * it once and preserve it across all the partial responses
+		 */
+		total_recs = net_buf_pull_be16(buf);
+	}
+
+	BT_DBG("max_rec_count %u, cont_state %u", max_rec_count, cont_state);
+
+	resp_buf = bt_sdp_create_pdu();
+	rsp = net_buf_add(resp_buf, sizeof(*rsp));
+
+	for (; cont_state < num_services; cont_state++) {
+		record = matching_recs[cont_state];
+
+		if (!record) {
+			continue;
+		}
+
+		/* Calculate total recs only if it is first packet */
+		if (!cont_state_size) {
+			total_recs++;
+		}
+
+		if (pkt_full) {
+			continue;
+		}
+
+		/* 4 bytes per Service Record Handle */
+		/* 4 bytes for ContinuationState */
+		if ((min(SDP_MTU, sdp->chan.tx.mtu) - resp_buf->len) <
+		    (4 + 4 + sizeof(struct bt_sdp_hdr))) {
+			pkt_full = true;
+		}
+
+		if (pkt_full) {
+			/* Packet exhausted: Add continuation state and break */
+			BT_DBG("Packet full, num_services_covered %u",
+			       cont_state);
+			net_buf_add_u8(resp_buf, SDP_SS_CONT_STATE_SIZE);
+			net_buf_add_u8(resp_buf, cont_state);
+
+			/* If it is the first packet of a partial response,
+			 * continue dry-running to calculate total_recs.
+			 * Else break
+			 */
+			if (cont_state_size) {
+				break;
+			}
+
+			continue;
+		}
+
+		/* Add the service record handle to the packet */
+		net_buf_add_be32(resp_buf, record->handle);
+		current_recs++;
+	}
+
+	/* Add 0 continuation state if packet is exhausted */
+	if (!pkt_full) {
+		net_buf_add_u8(resp_buf, 0);
+	} else {
+		net_buf_add_be16(resp_buf, total_recs);
+	}
+
+	rsp->total_recs = sys_cpu_to_be16(total_recs);
+	rsp->current_recs = sys_cpu_to_be16(current_recs);
+
+	BT_DBG("Sending response, len %u", resp_buf->len);
+	bt_sdp_send(&sdp->chan.chan, resp_buf, BT_SDP_SVC_SEARCH_RSP, tid);
+
+	return 0;
+}
+
+/* @brief SDP attribute iterator.
+ *
+ *  Iterate over attributes of a service record from a starting index.
+ *
+ *  @param record Service record whose attributes are to be iterated over.
+ *  @param idx Index in the attribute list from where to start.
+ *  @param func Callback function.
+ *  @param user_data Data to pass to the callback.
+ *
+ *  @return Index of the attribute where the iterator stopped
+ */
+static uint8_t bt_sdp_foreach_attr(struct bt_sdp_record *record, uint8_t idx,
+			    bt_sdp_attr_func_t func, void *user_data)
+{
+	for (; idx < record->attr_count; idx++) {
+		if (func(&record->attrs[idx], idx, user_data) ==
+		    BT_SDP_ITER_STOP) {
+			break;
+		}
+	}
+
+	return idx;
+}
+
+/* @brief Check if an attribute matches a range, and include it in the response
+ *
+ *  Checks if an attribute matches a given attribute ID or range, and if so,
+ *  includes it in the response packet
+ *
+ *  @param attr The current attribute
+ *  @param att_idx Index of the current attribute in the database
+ *  @param user_data Pointer to the structure containing response packet, byte
+ *   count, states, etc
+ *
+ *  @return BT_SDP_ITER_CONTINUE if should continue to the next attribute
+ *   or BT_SDP_ITER_STOP to stop.
+ */
+static uint8_t select_attrs(struct bt_sdp_attribute *attr, uint8_t att_idx,
+			    void *user_data)
+{
+	struct select_attrs_data *sad = user_data;
+	uint16_t att_id_lower, att_id_upper, att_id_cur;
+	uint8_t idx_filter;
+
+	for (idx_filter = 0; idx_filter < sad->num_filters; idx_filter++) {
+
+		att_id_lower = (sad->filter[idx_filter] >> 16);
+		att_id_upper = (sad->filter[idx_filter]);
+		att_id_cur = attr->id;
+
+		/* Check for range values */
+		if (att_id_lower != 0xffff &&
+		    (!IN_RANGE(att_id_cur, att_id_lower, att_id_upper))) {
+			continue;
+		}
+
+		/* Check for match values */
+		if (att_id_lower == 0xffff && att_id_cur != att_id_upper) {
+			continue;
+		}
+
+		/* Attribute ID matches */
+
+		/* TODO: Add the attribute value to the packet */
+
+		break;
+	}
+
+	return BT_SDP_ITER_CONTINUE;
+}
+
+/* @brief Creates a response containing list(s) of attributes
+ *
+ *  Creates a response containing the attributes of a service record. To be used
+ *  for responding to Service Attribute and Service Search Attribute requests
+ *
+ *  @param sdp Pointer to the SDP structure
+ *  @param record Service record whose attributes are to be included in the
+ *   response
+ *  @param filter Attribute values/ranges to be used as a filter
+ *  @param num_filters Number of elements in the attribute filter
+ *  @param max_att_len Maximum size of attributes to be included in the response
+ *  @param next_att Starting position of the search in the service's attr list
+ *
+ *  @return None
+ */
+static void create_attr_resp(struct bt_sdp *sdp, struct bt_sdp_record *record,
+			     uint32_t *filter, uint8_t num_filters,
+			     uint16_t max_att_len, uint8_t next_att)
+{
+	struct select_attrs_data sad;
+	uint8_t idx_att;
+
+	sad.num_filters = num_filters;
+	sad.rec = record;
+	sad.sdp = sdp;
+	sad.max_att_len = max_att_len;
+	sad.filter = filter;
+	idx_att = bt_sdp_foreach_attr(sad.rec, next_att, select_attrs, &sad);
+}
+
+/* @brief Extracts the attribute search list from a buffer
+ *
+ *  Parses a buffer to extract the attribute search list (list of attribute IDs
+ *  and ranges) which are to be used to filter attributes.
+ *
+ *  @param buf Buffer to be parsed for extracting the attribute search list
+ *  @param filter Empty list of 4byte filters that are filled in. For attribute
+ *   IDs, the lower 2 bytes contain the ID and the upper 2 bytes are set to
+ *   0xFFFF. For attribute ranges, the lower 2bytes indicate the start ID and
+ *   the upper 2bytes indicate the end ID
+ *  @param num_filters No. of filter elements filled in (to be returned)
+ *
+ *  @return 0 for success, or relevant error code
+ */
+static uint16_t get_att_search_list(struct net_buf *buf, uint32_t *filter,
+				    uint8_t *num_filters)
+{
+	struct bt_sdp_data_elem data_elem;
+	uint16_t res;
+	uint32_t size;
+
+	*num_filters = 0;
+	res = parse_data_elem(buf, &data_elem);
+	if (res) {
+		return res;
+	}
+
+	size = data_elem.data_size;
+
+	while (size) {
+		res = parse_data_elem(buf, &data_elem);
+		if (res) {
+			return res;
+		}
+
+		if ((data_elem.type & BT_SDP_TYPE_DESC_MASK) != BT_SDP_UINT8) {
+			BT_WARN("Invalid type %u in attribute ID list",
+				data_elem.type);
+			return BT_SDP_INVALID_SYNTAX;
+		}
+
+		if (buf->len < data_elem.data_size) {
+			BT_WARN("Malformed packet");
+			return BT_SDP_INVALID_SYNTAX;
+		}
+
+		/* This is an attribute ID */
+		if (data_elem.data_size == 2) {
+			filter[(*num_filters)++] = 0xffff0000 |
+							net_buf_pull_be16(buf);
+		}
+
+		/* This is an attribute ID range */
+		if (data_elem.data_size == 4) {
+			filter[(*num_filters)++] = net_buf_pull_be32(buf);
+		}
+
+		size -= data_elem.total_size;
+	}
+
+	return 0;
+}
+
+/* @brief Check if a given handle matches that of the current service
+ *
+ *  Checks if a given handle matches that of the current service
+ *
+ *  @param rec The current service record
+ *  @param user_data Pointer to the service record handle to be matched
+ *
+ *  @return BT_SDP_ITER_CONTINUE if should continue to the next record
+ *   or BT_SDP_ITER_STOP to stop.
+ */
+static uint8_t find_handle(struct bt_sdp_record *rec, void *user_data)
+{
+	uint32_t *svc_rec_hdl = user_data;
+
+	if (rec->handle == *svc_rec_hdl) {
+		return BT_SDP_ITER_STOP;
+	}
+
+	return BT_SDP_ITER_CONTINUE;
+}
+
+/* @brief Handler for Service Attribute Request
+ *
+ *  Parses, processes and responds to a Service Attribute Request
+ *
+ *  @param sdp Pointer to the SDP structure
+ *  @param buf Request buffer
+ *  @param tid Transaction ID
+ *
+ *  @return 0 for success, or relevant error code
+ */
+static uint16_t sdp_svc_att_req(struct bt_sdp *sdp, struct net_buf *buf,
+				uint16_t tid)
+{
+	uint32_t filter[MAX_NUM_ATT_ID_FILTER];
+	struct bt_sdp_record *record;
+	uint32_t svc_rec_hdl;
+	uint16_t max_att_len, res;
+	uint8_t num_filters, cont_state_size, next_att = 0;
+
+	if (buf->len < 6) {
+		BT_WARN("Malformed packet");
+		return BT_SDP_INVALID_SYNTAX;
+	}
+
+	svc_rec_hdl = net_buf_pull_be32(buf);
+	max_att_len = net_buf_pull_be16(buf);
+
+	/* Set up the filters */
+	res = get_att_search_list(buf, filter, &num_filters);
+	if (res) {
+		/* Error in parsing */
+		return res;
+	}
+
+	if (buf->len < 1) {
+		BT_WARN("Malformed packet");
+		return BT_SDP_INVALID_SYNTAX;
+	}
+
+	cont_state_size = net_buf_pull_u8(buf);
+
+	/* We only send out 1 byte continuation state in responses,
+	 * so expect only 1 byte in requests
+	 */
+	if (cont_state_size) {
+		if (cont_state_size != SDP_SA_CONT_STATE_SIZE) {
+			BT_WARN("Invalid cont state size %u", cont_state_size);
+			return BT_SDP_INVALID_CSTATE;
+		}
+
+		if (buf->len < cont_state_size) {
+			BT_WARN("Malformed packet");
+			return BT_SDP_INVALID_SYNTAX;
+		}
+
+		next_att = net_buf_pull_u8(buf) + 1;
+	}
+
+	BT_DBG("svc_rec_hdl %u, max_att_len 0x%04x, cont_state %u", svc_rec_hdl,
+	       max_att_len, next_att);
+
+	/* Find the service */
+	record = bt_sdp_foreach_svc(find_handle, &svc_rec_hdl);
+
+	if (!record) {
+		BT_WARN("Handle %u not found", svc_rec_hdl);
+		return BT_SDP_INVALID_RECORD_HANDLE;
+	}
+
+	create_attr_resp(sdp, record, filter, num_filters, max_att_len,
+			 next_att);
+
+	/* TODO: Form the resp packet and send */
 
 	return 0;
 }
@@ -536,6 +936,7 @@ static const struct {
 			  uint16_t tid);
 } handlers[] = {
 	{ BT_SDP_SVC_SEARCH_REQ, sdp_svc_search_req },
+	{ BT_SDP_SVC_ATTR_REQ, sdp_svc_att_req },
 };
 
 /* @brief Callback for SDP data receive

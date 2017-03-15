@@ -41,18 +41,13 @@
 #include "hal/cntr.h"
 #include "hal/cpu.h"
 #include "ticker/ticker.h"
-#include "ll/pdu.h"
-#include "ll/ctrl.h"
-#include "ll/ctrl_internal.h"
-#include "ll/ll.h"
+#include "ll_sw/pdu.h"
+#include "ll_sw/ctrl.h"
+#include "ll_sw/ctrl_internal.h"
+#include "ll.h"
 #include "hci_internal.h"
 
 #include "hal/debug.h"
-
-#define HCI_CMD		0x01
-#define HCI_ACL		0x02
-#define HCI_SCO		0x03
-#define HCI_EVT		0x04
 
 static uint8_t MALIGN(4) _rand_context[3 + 4 + 1];
 static uint8_t MALIGN(4) _ticker_nodes[RADIO_TICKER_NODES][TICKER_NODE_T_SIZE];
@@ -386,16 +381,6 @@ static int hci_driver_open(void)
 		return -ENOMEM;
 	}
 
-	if (IS_ENABLED(CONFIG_BLUETOOTH_CONTROLLER_PUBLIC_ADDRESS)) {
-		uint64_t addr64 = CONFIG_BLUETOOTH_CONTROLLER_PUBLIC_ADDRESS;
-		uint8_t bdaddr[6];
-
-		sys_put_le32(addr64 & 0xFFFFFFFF, &bdaddr[0]);
-		sys_put_le16((addr64 >> 32) & 0xFFFF, &bdaddr[4]);
-
-		ll_address_set(0, bdaddr);
-	}
-
 	IRQ_DIRECT_CONNECT(NRF5_IRQ_RADIO_IRQn, 0, radio_nrf5_isr, 0);
 	IRQ_CONNECT(NRF5_IRQ_RTC0_IRQn, 0, rtc0_nrf5_isr, 0, 0);
 	IRQ_CONNECT(NRF5_IRQ_RNG_IRQn, 1, rng_nrf5_isr, 0, 0);
@@ -418,7 +403,7 @@ static int hci_driver_open(void)
 	return 0;
 }
 
-static struct bt_hci_driver drv = {
+static const struct bt_hci_driver drv = {
 	.name	= "Controller",
 	.bus	= BT_HCI_DRIVER_BUS_VIRTUAL,
 	.open	= hci_driver_open,
