@@ -1331,12 +1331,6 @@ static void nd_reachable_timeout(struct k_work *work)
 			net_ipv6_send_ns(nbr->iface, NULL, NULL, NULL,
 					 &data->addr, false);
 
-<<<<<<< HEAD
-			k_delayed_work_init(&net_ipv6_nbr_data(nbr)->reachable,
-					    nd_reachable_timeout);
-
-=======
->>>>>>> upstream/master
 			k_delayed_work_submit(
 				&net_ipv6_nbr_data(nbr)->reachable,
 				RETRANS_TIMER);
@@ -1355,12 +1349,6 @@ void net_ipv6_nbr_set_reachable_timer(struct net_if *iface, struct net_nbr *nbr)
 
 	NET_DBG("Starting reachable timer nbr %p data %p time %d ms",
 		nbr, net_ipv6_nbr_data(nbr), time);
-<<<<<<< HEAD
-
-	k_delayed_work_init(&net_ipv6_nbr_data(nbr)->reachable,
-			    nd_reachable_timeout);
-=======
->>>>>>> upstream/master
 
 	k_delayed_work_submit(&net_ipv6_nbr_data(nbr)->reachable, time);
 }
