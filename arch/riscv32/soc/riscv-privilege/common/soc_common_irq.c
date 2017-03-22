@@ -1,23 +1,28 @@
 /*
- * Copyright (c) 2016 Jean-Paul Etienne <fractalclone@gmail.com>
+ * Copyright (c) 2017 Jean-Paul Etienne <fractalclone@gmail.com>
  *
  * SPDX-License-Identifier: Apache-2.0
  */
 
 /**
  * @file
- * @brief riscv32-qemu interrupt management code
+ * @brief interrupt management code for riscv SOCs supporting the riscv
+	  privileged architecture specification
  */
 #include <irq.h>
-#include <soc.h>
 
 void _arch_irq_enable(unsigned int irq)
 {
 	uint32_t mie;
 
+#if defined(CONFIG_RISCV_HAS_PLIC)
+	if (irq > RISCV_MAX_GENERIC_IRQ) {
+		riscv_plic_irq_enable(irq);
+		return;
+	}
+#endif
+
 	/*
-	 * Since only internal Timer device has interrupt within in
-	 * riscv32-qemu, use only mie CSR register to enable device interrupt.
 	 * CSR mie register is updated using atomic instruction csrrs
 	 * (atomic read and set bits in CSR register)
 	 */
@@ -29,6 +34,13 @@ void _arch_irq_enable(unsigned int irq)
 void _arch_irq_disable(unsigned int irq)
 {
 	uint32_t mie;
+
+#if defined(CONFIG_RISCV_HAS_PLIC)
+	if (irq > RISCV_MAX_GENERIC_IRQ) {
+		riscv_plic_irq_disable(irq);
+		return;
+	}
+#endif
 
 	/*
 	 * Use atomic instruction csrrc to disable device interrupt in mie CSR.
@@ -43,6 +55,11 @@ int _arch_irq_is_enabled(unsigned int irq)
 {
 	uint32_t mie;
 
+#if defined(CONFIG_RISCV_HAS_PLIC)
+	if (irq > RISCV_MAX_GENERIC_IRQ)
+		return riscv_plic_irq_is_enabled(irq);
+#endif
+
 	__asm__ volatile ("csrr %0, mie" : "=r" (mie));
 
 	return !!(mie & (1 << irq));
@@ -55,8 +72,6 @@ void soc_interrupt_init(void)
 	(void)irq_lock();
 
 	__asm__ volatile ("csrwi mie, 0\n"
-			  "csrwi sie, 0\n"
-			  "csrwi mip, 0\n"
-			  "csrwi sip, 0\n");
+			  "csrwi mip, 0\n");
 }
 #endif

@@ -9,13 +9,15 @@
  *       privileged architecture specification
  */
 
-#ifndef __RISCV_PRIVILEGE_H_
-#define __RISCV_PRIVILEGE_H_
+#ifndef __SOC_COMMON_H_
+#define __SOC_COMMON_H_
 
 /* IRQ numbers */
 #define RISCV_MACHINE_SOFT_IRQ       3  /* Machine Software Interrupt */
 #define RISCV_MACHINE_TIMER_IRQ      7  /* Machine Timer Interrupt */
 #define RISCV_MACHINE_EXT_IRQ        11 /* Machine External Interrupt */
+
+#define RISCV_MAX_GENERIC_IRQ        11 /* Max Generic Interrupt */
 
 /* Exception numbers */
 #define RISCV_MACHINE_ECALL_EXP      11 /* Machine ECALL instruction */
@@ -51,4 +53,20 @@
 /* SOC-Specific EXIT ISR command */
 #define SOC_ERET                     mret
 
-#endif /* __RISCV_PRIVILEGE_H_ */
+#ifndef _ASMLANGUAGE
+
+#if defined(CONFIG_RISCV_SOC_INTERRUPT_INIT)
+void soc_interrupt_init(void);
+#endif
+
+#if defined(CONFIG_RISCV_HAS_PLIC)
+void riscv_plic_irq_enable(uint32_t irq);
+void riscv_plic_irq_disable(uint32_t irq);
+int riscv_plic_irq_is_enabled(uint32_t irq);
+void riscv_plic_set_priority(uint32_t irq, uint32_t priority);
+int riscv_plic_get_irq(void);
+#endif
+
+#endif /* !_ASMLANGUAGE */
+
+#endif /* __SOC_COMMON_H_ */
