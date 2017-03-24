@@ -859,43 +859,6 @@ struct net_nbr *net_ipv6_get_nbr(struct net_if *iface, uint8_t idx)
 	return NULL;
 }
 
-#define NS_REPLY_TIMEOUT MSEC_PER_SEC
-
-static void ns_reply_timeout(struct k_work *work)
-{
-	/* We did not receive reply to a sent NS */
-	struct net_ipv6_nbr_data *data = CONTAINER_OF(work,
-						      struct net_ipv6_nbr_data,
-						      send_ns);
-
-	struct net_nbr *nbr = get_nbr_from_data(data);
-
-	if (!nbr) {
-		NET_DBG("NS timeout but no nbr data");
-		return;
-	}
-
-	if (!data->pending) {
-		/* Silently return, this is not an error as the work
-		 * cannot be cancelled in certain cases.
-		 */
-		return;
-	}
-
-	NET_DBG("NS nbr %p pending %p timeout to %s", nbr, data->pending,
-		net_sprint_ipv6_addr(&NET_IPV6_BUF(data->pending)->dst));
-
-	/* To unref when pending variable was set */
-	net_nbuf_unref(data->pending);
-
-	/* To unref the original buf allocation */
-	net_nbuf_unref(data->pending);
-
-	data->pending = NULL;
-
-	net_nbr_unref(nbr);
-}
-
 static inline uint8_t get_llao_len(struct net_if *iface)
 {
 	if (iface->link_addr.len == 6) {
@@ -2671,3 +2634,4 @@ void net_ipv6_init(void)
 	net_icmpv6_register_handler(&mld_query_input_handler);
 #endif
 }
+
