@@ -7,6 +7,7 @@
 #ifndef __JSON_H
 #define __JSON_H
 
+#include <misc/util.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <sys/types.h>
@@ -15,6 +16,8 @@ enum json_tokens {
 	JSON_TOK_NONE = '_',
 	JSON_TOK_OBJECT_START = '{',
 	JSON_TOK_OBJECT_END = '}',
+	JSON_TOK_LIST_START = '[',
+	JSON_TOK_LIST_END = ']',
 	JSON_TOK_STRING = '"',
 	JSON_TOK_COLON = ':',
 	JSON_TOK_COMMA = ',',
@@ -32,10 +35,110 @@ struct json_obj_descr {
 	size_t offset;
 
 	/* Valid values here: JSON_TOK_STRING, JSON_TOK_NUMBER,
-	 * JSON_TOK_TRUE, JSON_TOK_FALSE. (All others ignored.)
+	 * JSON_TOK_TRUE, JSON_TOK_FALSE, JSON_TOK_OBJECT_START,
+	 * JSON_TOK_LIST_START. (All others ignored.)
 	 */
 	enum json_tokens type;
+
+	union {
+		struct {
+			const struct json_obj_descr *sub_descr;
+			size_t sub_descr_len;
+		};
+		struct {
+			const struct json_obj_descr *element_descr;
+			size_t n_elements;
+		};
+	};
 };
+
+/**
+ * @brief Function pointer type to append bytes to a buffer while
+ * encoding JSON data.
+ *
+ * @param bytes Contents to write to the output
+ * @param len Number of bytes in @param bytes to append to output
+ * @param data User-provided pointer
+ *
+ * @return This callback function should return a negative number on
+ * error (which will be propagated to the return value of
+ * json_obj_encode()), or 0 on success.
+ */
+typedef int (*json_append_bytes_t)(const uint8_t *bytes, size_t len,
+				   void *data);
+
+/**
+ * @brief Helper macro to declare a descriptor for an object value
+ *
+ * @param struct_ Struct packing the values
+ *
+ * @param field_name_ Field name in the struct
+ *
+ * @param sub_descr_ Array of json_obj_descr describing the subobject
+ *
+ * Here's an example of use:
+ *      struct nested {
+ *          int foo;
+ *          struct {
+ *             int baz;
+ *          } bar;
+ *      };
+ *
+ *      struct json_obj_descr nested_bar[] = {
+ *          { ... declare bar.baz descriptor ... },
+ *      };
+ *      struct json_obj_descr nested[] = {
+ *          { ... declare foo descriptor ... },
+ *          JSON_OBJ_DESCR_OBJECT(struct nested, bar, nested_bar),
+ *      };
+ */
+#define JSON_OBJ_DESCR_OBJECT(struct_, field_name_, sub_descr_) \
+	{ \
+		.field_name = (#field_name_), \
+		.field_name_len = (sizeof(#field_name_) - 1), \
+		.offset = offsetof(struct_, field_name_), \
+		.type = JSON_TOK_OBJECT_START, \
+		.sub_descr = sub_descr_, \
+		.sub_descr_len = ARRAY_SIZE(sub_descr_) \
+	}
+
+/**
+ * @brief Helper macro to declare a descriptor for an array value
+ *
+ * @param struct_ Struct packing the values
+ *
+ * @param field_name_ Field name in the struct
+ *
+ * @param max_len_ Maximum number of elements in array
+ *
+ * @param len_field_ Field name in the struct for the number of elements
+ * in the array
+ *
+ * @param elem_type_ Element type
+ *
+ * Here's an example of use:
+ *      struct example {
+ *          int foo[10];
+ *          size_t foo_len;
+ *      };
+ *
+ *      struct json_obj_descr array[] = {
+ *           JSON_OBJ_DESCR_ARRAY(struct example, foo, JSON_TOK_NUMBER)
+ *      };
+ */
+#define JSON_OBJ_DESCR_ARRAY(struct_, field_name_, max_len_, \
+			     len_field_, elem_type_) \
+	{ \
+		.field_name = (#field_name_), \
+		.field_name_len = sizeof(#field_name_) - 1, \
+		.offset = offsetof(struct_, field_name_), \
+		.type = JSON_TOK_LIST_START, \
+		.element_descr = &(struct json_obj_descr) { \
+			.type = elem_type_, \
+			.offset = offsetof(struct_, len_field_), \
+		}, \
+		.n_elements = (max_len_), \
+	}
 
 /**
  * @brief Parses the JSON-encoded object pointer to by @param json, with
@@ -55,11 +158,12 @@ struct json_obj_descr {
  *         .type = JSON_TOK_STRING }
  *    };
  *
- * Since this parser is designed for machine-to-machine communications,
- * some liberties were taken to simplify the design: (1) strings are not
- * unescaped; (2) no UTF-8 validation is performed; (3) only integer
- * numbers are supported; (4) nested objects are not supported, including
- * arrays and objects within objects.
+ * Since this parser is designed for machine-to-machine communications, some
+ * liberties were taken to simplify the design:
+ * (1) strings are not unescaped (but only valid escape sequences are
+ * accepted);
+ * (2) no UTF-8 validation is performed; and
+ * (3) only integer numbers are supported (no strtod() in the minimal libc).
  *
  * @param json Pointer to JSON-encoded value to be parsed
  *
@@ -106,5 +210,61 @@ ssize_t json_escape(char *str, size_t *len, size_t buf_size);
  * @return The length str would have if it were escaped
  */
 size_t json_calc_escaped_len(const char *str, size_t len);
+
+/**
+ * @brief Calculates the string length to fully encode an object
+ *
+ * @param descr Pointer to the descriptor array
+ *
+ * @param descr_len Number of elements in the descriptor array
+ *
+ * @param val Struct holding the values
+ *
+ * @return Number of bytes necessary to encode the values if >0,
+ * an error code is returned.
+ */
+ssize_t json_calc_encoded_len(const struct json_obj_descr *descr,
+			      size_t descr_len, const void *val);
+
+/**
+ * @brief Encodes an object in a contiguous memory location
+ *
+ * @param descr Pointer to the descriptor array
+ *
+ * @param descr_len Number of elements in the descriptor array
+ *
+ * @param val Struct holding the values
+ *
+ * @param buffer Buffer to store the JSON data
+ *
+ * @param buf_size Size of buffer, in bytes, with space for the terminating
+ * NUL character
+ *
+ * @return 0 if object has been successfully encoded. A negative value
+ * indicates an error (as defined on errno.h).
+ */
+int json_obj_encode_buf(const struct json_obj_descr *descr, size_t descr_len,
+			const void *val, char *buffer, size_t buf_size);
+
+/**
+ * @brief Encodes an object using an arbitrary writer function
+ *
+ * @param descr Pointer to the descriptor array
+ *
+ * @param descr_len Number of elements in the descriptor array
+ *
+ * @param val Struct holding the values
+ *
+ * @param append_bytes Function to append bytes to the output
+ *
+ * @param data Data pointer to be passed to the append_bytes callback
+ * function.
+ *
+ * @return 0 if object has been successfully encoded. A negative value
+ * indicates an error.
+ */
+int json_obj_encode(const struct json_obj_descr *descr, size_t descr_len,
+		    const void *val, json_append_bytes_t append_bytes,
+		    void *data);
 
 #endif /* __JSON_H */
