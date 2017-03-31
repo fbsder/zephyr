@@ -101,6 +101,13 @@ static int uart_stm32_fifo_fill(struct device *dev, const uint8_t *tx_data,
 #else
 		LL_USART_TransmitData8(UartHandle->Instance, tx_data[num_tx++]);
 #endif
+		/*
+		 * Wait for H/W to set TXE flag, or else it will be evaluated
+		 * again at the top of this loop *before* H/W has chance to
+		 * initially detect that data is being processed.
+		 */
+		while (!__HAL_UART_GET_FLAG(UartHandle, UART_FLAG_TXE))
+			;
 	}
 
 	return num_tx;
@@ -345,7 +352,9 @@ static const struct uart_stm32_config uart_stm32_dev_cfg_1 = {
 static struct uart_stm32_data uart_stm32_dev_data_1 = {
 	.huart = {
 		.Init = {
-			.BaudRate = CONFIG_UART_STM32_PORT_1_BAUD_RATE} }
+			.BaudRate = CONFIG_UART_STM32_PORT_1_BAUD_RATE
+		}
+	}
 };
 
 DEVICE_AND_API_INIT(uart_stm32_1, CONFIG_UART_STM32_PORT_1_NAME,
