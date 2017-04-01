@@ -25,6 +25,11 @@
 
 #define DMA_STM32_IRQ_PRI	CONFIG_DMA_0_IRQ_PRI
 
+#define DMA_STM32_1_RX_CHANNEL_ID	CONFIG_DMA_1_RX_SUB_CHANNEL_ID
+#define DMA_STM32_1_TX_CHANNEL_ID	CONFIG_DMA_1_TX_SUB_CHANNEL_ID
+#define DMA_STM32_2_RX_CHANNEL_ID	CONFIG_DMA_2_RX_SUB_CHANNEL_ID
+#define DMA_STM32_2_TX_CHANNEL_ID	CONFIG_DMA_2_TX_SUB_CHANNEL_ID
+
 struct dma_stm32_stream_reg {
 	/* Shared registers */
 	uint32_t lisr;
@@ -56,7 +61,9 @@ static struct dma_stm32_device {
 	struct device *clk;
 	struct dma_stm32_stream stream[DMA_STM32_MAX_STREAMS];
 	bool mem2mem;
-} ddata[DMA_STM32_MAX_DEVS];
+	uint8_t channel_rx;
+	uint8_t channel_tx;
+} device_data[DMA_STM32_MAX_DEVS];
 
 struct dma_stm32_config {
 	struct stm32f4x_pclken pclken;
@@ -192,9 +199,10 @@ static void dma_stm32_dump_reg(struct dma_stm32_device *ddata, uint32_t id)
 	SYS_LOG_INF("SCR:   0x%x \t(config)\n", scr);
 	SYS_LOG_INF("NDTR:  0x%x \t(length)\n", ndtr);
 	SYS_LOG_INF("SPAR:  0x%x \t(source)\n", spar);
-	SYS_LOG_INF("SM0AR: 0x%x \t(destination)\n", sm0ar);
-	SYS_LOG_INF("SM1AR: 0x%x \t(destination (double buffer mode))\n", sm1ar);
 	SYS_LOG_INF("SFCR:  0x%x \t(fifo control)\n", sfcr);
+	SYS_LOG_INF("SM0AR: 0x%x \t(destination)\n", sm0ar);
+	SYS_LOG_INF("SM1AR: 0x%x \t(destination (double buffer mode))\n",
+		    sm1ar);
 }
 
 static uint32_t dma_stm32_irq_status(struct dma_stm32_device *ddata,
@@ -301,14 +309,17 @@ static int dma_stm32_config_devcpy(struct device *dev, uint32_t id,
 			DMA_STM32_SCR_PSIZE(dst_bus_width) |
 			DMA_STM32_SCR_MSIZE(src_bus_width) |
 			DMA_STM32_SCR_PBURST(dst_burst_size) |
-			DMA_STM32_SCR_MBURST(src_burst_size);
+			DMA_STM32_SCR_MBURST(src_burst_size) |
+			DMA_STM32_SCR_REQ(ddata->channel_tx) |
+			DMA_STM32_SCR_MINC;
 		break;
 	case PERIPHERAL_TO_MEMORY:
 		regs->scr = DMA_STM32_SCR_DIR(DMA_STM32_DEV_TO_MEM) |
 			DMA_STM32_SCR_PSIZE(src_bus_width) |
 			DMA_STM32_SCR_MSIZE(dst_bus_width) |
 			DMA_STM32_SCR_PBURST(src_burst_size) |
-			DMA_STM32_SCR_MBURST(dst_burst_size);
+			DMA_STM32_SCR_MBURST(dst_burst_size) |
+			DMA_STM32_SCR_REQ(ddata->channel_rx);
 		break;
 	default:
 		SYS_LOG_ERR("DMA error: Direction not supported: %d",
@@ -493,7 +504,7 @@ const struct dma_stm32_config dma_stm32_1_cdata = {
 };
 
 DEVICE_AND_API_INIT(dma_stm32_1, CONFIG_DMA_1_NAME, &dma_stm32_init,
-		    &ddata[DMA_STM32_1], &dma_stm32_1_cdata,
+		    &device_data[DMA_STM32_1], &dma_stm32_1_cdata,
 		    POST_KERNEL, CONFIG_KERNEL_INIT_PRIORITY_DEVICE,
 		    (void *)&dma_funcs);
 
@@ -504,7 +515,7 @@ static const struct dma_stm32_config dma_stm32_2_cdata = {
 };
 
 DEVICE_AND_API_INIT(dma_stm32_2, CONFIG_DMA_2_NAME, &dma_stm32_init,
-		    &ddata[DMA_STM32_2], &dma_stm32_2_cdata,
+		    &device_data[DMA_STM32_2], &dma_stm32_2_cdata,
 		    POST_KERNEL, CONFIG_KERNEL_INIT_PRIORITY_DEVICE,
 		    (void *)&dma_funcs);
 
@@ -520,6 +531,8 @@ static void dma_stm32_irq_7(void *arg) { dma_stm32_irq_handler(arg, 7); }
 static void dma_stm32_1_config(struct dma_stm32_device *ddata)
 {
 	ddata->base = DMA_STM32_1_BASE;
+	ddata->channel_tx = DMA_STM32_1_TX_CHANNEL_ID;
+	ddata->channel_rx = DMA_STM32_1_RX_CHANNEL_ID;
 
 	IRQ_CONNECT(STM32F4_IRQ_DMA1_STREAM0, DMA_STM32_IRQ_PRI,
 		    dma_stm32_irq_0, DEVICE_GET(dma_stm32_1), 0);
@@ -558,6 +571,8 @@ static void dma_stm32_2_config(struct dma_stm32_device *ddata)
 {
 	ddata->base = DMA_STM32_2_BASE;
 	ddata->mem2mem = true;
+	ddata->channel_tx = DMA_STM32_2_TX_CHANNEL_ID;
+	ddata->channel_rx = DMA_STM32_2_RX_CHANNEL_ID;
 
 	IRQ_CONNECT(STM32F4_IRQ_DMA2_STREAM0, DMA_STM32_IRQ_PRI,
 		    dma_stm32_irq_0, DEVICE_GET(dma_stm32_2), 0);

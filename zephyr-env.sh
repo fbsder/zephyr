@@ -32,16 +32,26 @@ if [ "X$NAME" "==" "Xzephyr-env.sh" ]; then
 fi
 
 # You can further customize your environment by creating a bash script called
-# zephyr-env_install.bash in your home directory. It will be automatically
+# .zephyrrc in your home directory. It will be automatically
 # run (if it exists) by this script.
 
-#uname | grep -q -P "MINGW|MSYS" && PWD_OPT="-W"
+#if uname | grep -q -P "MINGW|MSYS"; then
+#   win_build=1
+#   PWD_OPT="-W"
+#else
+    win_build=0
+    PWD_OPT=""
+#fi
 
 # identify OS source tree root directory
 export ZEPHYR_BASE=$( builtin cd "$( dirname "$DIR" )" && pwd ${PWD_OPT})
+unset PWD_OPT
 
 scripts_path=${ZEPHYR_BASE}/scripts
-scripts_path=$(echo "/$scripts_path" | sed 's/\\/\//g' | sed 's/://')
+if [ "$win_build" -eq 1 ]; then
+    scripts_path=$(echo "/$scripts_path" | sed 's/\\/\//g' | sed 's/://')
+fi
+unset win_build
 if ! echo "${PATH}" | grep -q "${scripts_path}"; then
     export PATH=${scripts_path}:${PATH}
 fi
