@@ -1,9 +1,11 @@
+.. _samples-and-demos:
+
 Samples and Demos
 #################
 
 
 .. toctree::
-   :maxdepth: 3
+   :maxdepth: 2
    :glob:
 
    kernel
@@ -15,10 +17,8 @@ Samples and Demos
    grove/*
    advanced
    power/power.rst
+   boards/*
 
 
-
-
-
-To add a new sample documentation, please use the template available under
+To add a new sample document, please use the template available under
 :file:`doc/templates/sample.tmpl`
