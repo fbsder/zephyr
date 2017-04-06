@@ -147,6 +147,8 @@ source "drivers/spi/Kconfig.dw"
 
 source "drivers/spi/Kconfig.mcux_dspi"
 
+source "drivers/spi/Kconfig.nrf5"
+
 source "drivers/spi/Kconfig.samr21"
 
 endif # SPI

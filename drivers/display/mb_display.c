@@ -23,30 +23,41 @@
 
 #include "mb_font.h"
 
+#define MODE_MASK    BIT_MASK(16)
+
 #define DISPLAY_ROWS 3
 #define DISPLAY_COLS 9
 
 #define SCROLL_OFF   0
 #define SCROLL_START 1
 
-/* Time between scroll shifts */
-#define SCROLL_DURATION K_MSEC(CONFIG_MICROBIT_DISPLAY_SCROLL_STEP)
+#define SCROLL_DEFAULT_DURATION K_MSEC(80)
 
 struct mb_display {
-	struct device  *dev;      /* GPIO device */
+	struct device  *dev;         /* GPIO device */
 
-	struct k_timer  timer;    /* Rendering timer */
+	struct k_timer  timer;       /* Rendering timer */
+
+	uint8_t         img_count;   /* Image count */
+
+	uint8_t         cur_img;     /* Current image or character to show */
+
+	uint8_t         scroll:3,    /* Scroll shift */
+			first:1,     /* First frame of a scroll sequence */
+			loop:1,      /* Loop to beginning */
+			text:1,      /* We're showing a string (not image) */
+			img_sep:1;   /* One column image separation */
 
 	/* The following variables track the currently shown image */
-	int             cur;         /* Currently rendered row */
+	uint8_t         cur;         /* Currently rendered row */
 	uint32_t        row[3];      /* Content (columns) for each row */
 	int64_t         expiry;      /* When to stop showing current image */
 	int32_t         duration;    /* Duration for each shown image */
 
-	struct mb_image img[2];      /* Current and next image */
-	uint16_t        scroll;      /* Scroll shift */
-
-	const char     *str;         /* String to be shown */
+	union {
+		const struct mb_image *img; /* Array of images to show */
+		const char            *str; /* String to be shown */
+	};
 
 	/* Buffer for printed strings */
 	char            str_buf[CONFIG_MICROBIT_DISPLAY_STR_MAX];
@@ -69,11 +80,6 @@ static const struct x_y map[DISPLAY_ROWS][DISPLAY_COLS] = {
 /* Mask of all the column bits */
 static const uint32_t col_mask = (((~0UL) << LED_COL1_GPIO_PIN) &
 				  ((~0UL) >> (31 - LED_COL9_GPIO_PIN)));
-
-static inline void img_copy(struct mb_image *dst, const struct mb_image *src)
-{
-	memcpy(dst, src, sizeof(*dst));
-}
 
 static inline const struct mb_image *get_font(char ch)
 {
@@ -137,38 +143,118 @@ static inline void update_pins(struct mb_display *disp, uint32_t val)
 	}
 }
 
+static void reset_display(struct mb_display *disp)
+{
+	k_timer_stop(&disp->timer);
+
+	disp->str = NULL;
+	disp->cur_img = 0;
+	disp->img = NULL;
+	disp->img_count = 0;
+	disp->scroll = SCROLL_OFF;
+}
+
+static const struct mb_image *current_img(struct mb_display *disp)
+{
+	if (disp->scroll && disp->first) {
+		return get_font(' ');
+	}
+
+	if (disp->text) {
+		return get_font(disp->str[disp->cur_img]);
+	} else {
+		return &disp->img[disp->cur_img];
+	}
+}
+
+static const struct mb_image *next_img(struct mb_display *disp)
+{
+	if (disp->text) {
+		if (disp->first) {
+			return get_font(disp->str[0]);
+		} else if (disp->str[disp->cur_img]) {
+			return get_font(disp->str[disp->cur_img + 1]);
+		} else {
+			return get_font(' ');
+		}
+	} else {
+		if (disp->first) {
+			return &disp->img[0];
+		} else if (disp->cur_img < (disp->img_count - 1)) {
+			return &disp->img[disp->cur_img + 1];
+		} else {
+			return get_font(' ');
+		}
+	}
+}
+
+static inline bool last_frame(struct mb_display *disp)
+{
+	if (disp->text) {
+		return (disp->str[disp->cur_img] == '\0');
+	} else {
+		return (disp->cur_img >= disp->img_count);
+	}
+}
+
+static inline uint8_t scroll_steps(struct mb_display *disp)
+{
+	return 5 + disp->img_sep;
+}
+
 static void update_scroll(struct mb_display *disp)
 {
-	if (disp->scroll < 5) {
+	if (disp->scroll < scroll_steps(disp)) {
 		struct mb_image img;
 		int i;
 
 		for (i = 0; i < 5; i++) {
-			img.row[i] = (disp->img[0].row[i] >> disp->scroll) |
-				(disp->img[1].row[i] << (5 - disp->scroll));
+			const struct mb_image *i1 = current_img(disp);
+			const struct mb_image *i2 = next_img(disp);
+
+			img.row[i] = ((i1->row[i] >> disp->scroll) |
+				      (i2->row[i] << (scroll_steps(disp) -
+						      disp->scroll)));
 		}
 
 		disp->scroll++;
 		start_image(disp, &img);
 	} else {
-		if (!disp->str) {
-			disp->scroll = SCROLL_OFF;
-			return;
+		if (disp->first) {
+			disp->first = 0;
+		} else {
+			disp->cur_img++;
 		}
 
-		img_copy(&disp->img[0], &disp->img[1]);
+		if (last_frame(disp)) {
+			if (!disp->loop) {
+				reset_display(disp);
+				return;
+			}
 
-		if (disp->str[0]) {
-			img_copy(&disp->img[1], get_font(disp->str[0]));
-			disp->str++;
-		} else {
-			img_copy(&disp->img[1], get_font(' '));
-			disp->str = NULL;
+			disp->cur_img = 0;
+			disp->first = 1;
 		}
 
 		disp->scroll = SCROLL_START;
-		start_image(disp, &disp->img[0]);
+		start_image(disp, current_img(disp));
 	}
+}
+
+static void update_image(struct mb_display *disp)
+{
+	disp->cur_img++;
+
+	if (last_frame(disp)) {
+		if (!disp->loop) {
+			reset_display(disp);
+			return;
+		}
+
+		disp->cur_img = 0;
+	}
+
+	start_image(disp, current_img(disp));
 }
 
 static void show_row(struct k_timer *timer)
@@ -182,11 +268,8 @@ static void show_row(struct k_timer *timer)
 	    k_uptime_get() > disp->expiry) {
 		if (disp->scroll) {
 			update_scroll(disp);
-		} else if (disp->str && disp->str[0]) {
-			start_image(disp, get_font(disp->str[0]));
-			disp->str++;
 		} else {
-			k_timer_stop(&disp->timer);
+			update_image(disp);
 		}
 	}
 }
@@ -202,32 +285,70 @@ static struct mb_display display = {
 	.timer = K_TIMER_INITIALIZER(display.timer, show_row, clear_display),
 };
 
-void mb_display_image(struct mb_display *disp, const struct mb_image *img,
-		      int32_t duration)
+static void start_scroll(struct mb_display *disp, int32_t duration)
 {
-	disp->str = NULL;
-	disp->scroll = SCROLL_OFF;
+	/* Divide total duration by number of scrolling steps */
+	if (duration) {
+		disp->duration = duration / scroll_steps(disp);
+	} else {
+		disp->duration = SCROLL_DEFAULT_DURATION;
+	}
+
+	disp->scroll = SCROLL_START;
+	disp->first = 1;
+	disp->cur_img = 0;
+	start_image(disp, get_font(' '));
+}
+
+static void start_single(struct mb_display *disp, int32_t duration)
+{
 	disp->duration = duration;
 
-	start_image(disp, img);
+	if (disp->text) {
+		start_image(disp, get_font(disp->str[0]));
+	} else {
+		start_image(disp, disp->img);
+	}
+}
+
+void mb_display_image(struct mb_display *disp, uint32_t mode, int32_t duration,
+		      const struct mb_image *img, uint8_t img_count)
+{
+	reset_display(disp);
+
+	__ASSERT(img && img_count > 0, "Invalid parameters");
+
+	disp->text = 0;
+	disp->img_count = img_count;
+	disp->img = img;
+	disp->img_sep = 0;
+	disp->cur_img = 0;
+	disp->loop = !!(mode & MB_DISPLAY_FLAG_LOOP);
+
+	switch (mode & MODE_MASK) {
+	case MB_DISPLAY_MODE_DEFAULT:
+	case MB_DISPLAY_MODE_SINGLE:
+		start_single(disp, duration);
+		break;
+	case MB_DISPLAY_MODE_SCROLL:
+		start_scroll(disp, duration);
+		break;
+	default:
+		__ASSERT(0, "Invalid display mode");
+	}
 }
 
 void mb_display_stop(struct mb_display *disp)
 {
-	k_timer_stop(&disp->timer);
-	disp->str = NULL;
-	disp->scroll = SCROLL_OFF;
+	reset_display(disp);
 }
 
-void mb_display_char(struct mb_display *disp, char chr, int32_t duration)
-{
-	mb_display_image(disp, get_font(chr), duration);
-}
-
-void mb_display_string(struct mb_display *disp, int32_t duration,
-		       const char *fmt, ...)
+void mb_display_print(struct mb_display *disp, uint32_t mode,
+		      int32_t duration, const char *fmt, ...)
 {
 	va_list ap;
+
+	reset_display(disp);
 
 	va_start(ap, fmt);
 	vsnprintk(disp->str_buf, sizeof(disp->str_buf), fmt, ap);
@@ -237,37 +358,23 @@ void mb_display_string(struct mb_display *disp, int32_t duration,
 		return;
 	}
 
-	disp->str = &disp->str_buf[1];
-	disp->duration = duration;
-	disp->scroll = SCROLL_OFF;
+	disp->str = disp->str_buf;
+	disp->text = 1;
+	disp->img_sep = 1;
+	disp->cur_img = 0;
+	disp->loop = !!(mode & MB_DISPLAY_FLAG_LOOP);
 
-	start_image(disp, get_font(disp->str_buf[0]));
-}
-
-void mb_display_print(struct mb_display *disp, const char *fmt, ...)
-{
-	va_list ap;
-
-	va_start(ap, fmt);
-	vsnprintk(disp->str_buf, sizeof(disp->str_buf), fmt, ap);
-	va_end(ap);
-
-	if (disp->str_buf[0] == '\0') {
-		return;
+	switch (mode & MODE_MASK) {
+	case MB_DISPLAY_MODE_DEFAULT:
+	case MB_DISPLAY_MODE_SCROLL:
+		start_scroll(disp, duration);
+		break;
+	case MB_DISPLAY_MODE_SINGLE:
+		start_single(disp, duration);
+		break;
+	default:
+		__ASSERT(0, "Invalid display mode");
 	}
-
-	if (disp->str_buf[1] == '\0') {
-		disp->str = NULL;
-	} else {
-		disp->str = &disp->str_buf[2];
-	}
-
-	img_copy(&disp->img[0], get_font(disp->str_buf[0]));
-	img_copy(&disp->img[1], get_font(disp->str_buf[1]));
-	disp->scroll = SCROLL_START;
-	disp->duration = SCROLL_DURATION;
-
-	start_image(disp, &disp->img[0]);
 }
 
 struct mb_display *mb_display_get(void)
