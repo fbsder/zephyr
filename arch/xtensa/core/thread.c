@@ -14,9 +14,6 @@
 #include <xtensa_config.h>
 
 extern void _xt_user_exit(void);
-#if CONFIG_MICROKERNEL
-extern FUNC_NORETURN void _TaskAbort(void);
-#endif
 
 #if defined(CONFIG_THREAD_MONITOR)
 #define THREAD_MONITOR_INIT(thread) _thread_monitor_init(thread)
@@ -85,8 +82,7 @@ void _new_thread(char *pStack, size_t stackSize,
 		int prio, unsigned int options)
 {
 	/* Align stack end to maximum alignment requirement. */
-	char *stackEnd = (char *)ROUND_DOWN(pStack + stackSize,
-		(XCHAL_TOTAL_SA_ALIGN < 16 ? 16 : XCHAL_TOTAL_SA_ALIGN));
+	char *stackEnd = (char *)ROUND_DOWN(pStack + stackSize, 16);
 	/* k_thread is located at top of stack while frames are located at end
 	 * of it
 	 */
@@ -104,7 +100,6 @@ void _new_thread(char *pStack, size_t stackSize,
 #endif
 #if XCHAL_CP_NUM > 0
 	/* Coprocessor's stack is allocated just after the k_thread */
-	thread->arch.preempCoprocReg.cpStack = pStack + sizeof(struct k_thread);
 	cpSA = (uint32_t *)(thread->arch.preempCoprocReg.cpStack + XT_CP_ASA);
 	/* Coprocessor's save area alignment is at leat 16 bytes */
 	*cpSA = ROUND_UP(cpSA + 1,

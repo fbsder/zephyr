@@ -113,14 +113,14 @@ void k_call_stacks_analyze(void)
 {
 #if defined(CONFIG_INIT_STACKS) && defined(CONFIG_PRINTK)
 	extern char sys_work_q_stack[CONFIG_SYSTEM_WORKQUEUE_STACK_SIZE];
-#if defined(CONFIG_ARC)
+#if defined(CONFIG_ARC) && CONFIG_RGF_NUM_BANKS != 1
 	extern char _firq_stack[CONFIG_FIRQ_STACK_SIZE];
 #endif /* CONFIG_ARC */
 
 	printk("Kernel stacks:\n");
 	stack_analyze("main     ", _main_stack, sizeof(_main_stack));
 	stack_analyze("idle     ", _idle_stack, sizeof(_idle_stack));
-#if defined(CONFIG_ARC)
+#if defined(CONFIG_ARC) && CONFIG_RGF_NUM_BANKS != 1
 	stack_analyze("firq     ", _firq_stack, sizeof(_firq_stack));
 #endif /* CONFIG_ARC */
 	stack_analyze("interrupt", _interrupt_stack,
@@ -178,11 +178,6 @@ static void _main(void *unused1, void *unused2, void *unused3)
 	ARG_UNUSED(unused3);
 
 	_sys_device_do_config_level(_SYS_INIT_LEVEL_POST_KERNEL);
-
-	/* These 3 are deprecated */
-	_sys_device_do_config_level(_SYS_INIT_LEVEL_SECONDARY);
-	_sys_device_do_config_level(_SYS_INIT_LEVEL_NANOKERNEL);
-	_sys_device_do_config_level(_SYS_INIT_LEVEL_MICROKERNEL);
 
 	/* Final init level before app starts */
 	_sys_device_do_config_level(_SYS_INIT_LEVEL_APPLICATION);
@@ -352,9 +347,6 @@ FUNC_NORETURN void _Cstart(void)
 	 */
 
 	prepare_multithreading(dummy_thread);
-
-	/* Deprecated */
-	_sys_device_do_config_level(_SYS_INIT_LEVEL_PRIMARY);
 
 	/* perform basic hardware initialization */
 	_sys_device_do_config_level(_SYS_INIT_LEVEL_PRE_KERNEL_1);
