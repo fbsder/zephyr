@@ -69,7 +69,7 @@ source "drivers/serial/Kconfig.atmel_sam3"
 
 source "drivers/serial/Kconfig.usart_sam"
 
-source "drivers/serial/Kconfig.atmel_samr21"
+source "drivers/serial/Kconfig.uart_sam"
 
 source "drivers/serial/Kconfig.qmsi"
 
@@ -86,5 +86,7 @@ source "drivers/serial/Kconfig.cmsdk_apb"
 source "drivers/serial/Kconfig.riscv_qemu"
 
 source "drivers/serial/Kconfig.fe310"
+
+source "drivers/serial/Kconfig.atmel_samr21"
 
 endif
