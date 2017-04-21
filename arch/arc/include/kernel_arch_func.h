@@ -31,7 +31,7 @@ extern "C" {
 #include <v2/irq.h>
 #endif
 
-static ALWAYS_INLINE void nanoArchInit(void)
+static ALWAYS_INLINE void kernel_arch_init(void)
 {
 	_irq_setup();
 }
@@ -58,7 +58,7 @@ static ALWAYS_INLINE int _is_in_isr(void)
 
 /**
  *
- * @bried Indicates the interrupt number of the highest priority
+ * @brief Indicates the interrupt number of the highest priority
  * active interrupt
  *
  * @return IRQ number

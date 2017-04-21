@@ -11,7 +11,7 @@
 #define __NET_BUF_H
 
 #include <stddef.h>
-#include <stdint.h>
+#include <zephyr/types.h>
 #include <misc/util.h>
 #include <zephyr.h>
 
@@ -597,6 +597,15 @@ static inline void net_buf_destroy(struct net_buf *buf)
 {
 	k_lifo_put(&buf->pool->free, buf);
 }
+
+/**
+ *  @brief Reset buffer
+ *
+ *  Reset buffer data and flags so it can be reused for other purposes.
+ *
+ *  @param buf Buffer to reset.
+ */
+void net_buf_reset(struct net_buf *buf);
 
 /**
  *  @brief Initialize buffer with the given headroom.

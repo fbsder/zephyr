@@ -148,7 +148,7 @@ static inline void _dump_timeout(struct _timeout *timeout, int extra_tab)
 
 	K_DEBUG("%stimeout %p, prev: %p, next: %p\n"
 		"%s\tthread: %p, wait_q: %p\n"
-		"%s\tticks remaining: %" PRId32 "\n"
+		"%s\tticks remaining: %d\n"
 		"%s\tfunction: %p\n",
 		tab, timeout, timeout->node.prev, timeout->node.next,
 		tab, timeout->thread, timeout->wait_q,
@@ -187,9 +187,6 @@ static inline void _dump_timeout_q(void)
  * two timeouts queued very close to one another to expire in the same order
  * they were queued. This could be changed at the cost of potential longer
  * interrupt latency.
- *
- * NOTE: The current implementation of the legacy semaphore feature depends on
- * the timeouts being queued in reverse order.
  *
  * Must be called with interrupts locked.
  */

@@ -42,7 +42,7 @@ $(shell mkdir -p $(O))
 override O := $(realpath $(O))
 endif
 
-export ARCH MDEF_FILE QEMU_EXTRA_FLAGS PROJECT_BASE
+export ARCH QEMU_EXTRA_FLAGS PROJECT_BASE
 
 override CONF_FILE := $(strip $(subst $(DQUOTE),,$(CONF_FILE)))
 
@@ -107,7 +107,7 @@ endif
 debugserver: FORCE
 	$(Q)$(CONFIG_SHELL) $(ZEPHYR_BASE)/scripts/support/$(DEBUG_SCRIPT) debugserver
 
-initconfig outputexports: $(DOTCONFIG)
+initconfig: $(DOTCONFIG)
 
 $(BOARDCONFIG):
 	@rm -f $(O)/.board_*
@@ -117,6 +117,12 @@ ram_report: initconfig
 	$(Q)$(call zephyrmake,$(O),$@)
 
 rom_report: initconfig
+	$(Q)$(call zephyrmake,$(O),$@)
+
+outputexports: initconfig
+	$(Q)$(call zephyrmake,$(O),$@)
+
+dts: initconfig
 	$(Q)$(call zephyrmake,$(O),$@)
 
 menuconfig: initconfig

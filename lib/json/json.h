@@ -9,7 +9,7 @@
 
 #include <misc/util.h>
 #include <stddef.h>
-#include <stdint.h>
+#include <zephyr/types.h>
 #include <sys/types.h>
 
 enum json_tokens {
@@ -64,7 +64,7 @@ struct json_obj_descr {
  * error (which will be propagated to the return value of
  * json_obj_encode()), or 0 on success.
  */
-typedef int (*json_append_bytes_t)(const uint8_t *bytes, size_t len,
+typedef int (*json_append_bytes_t)(const u8_t *bytes, size_t len,
 				   void *data);
 
 /**

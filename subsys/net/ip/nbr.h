@@ -11,7 +11,7 @@
 #define __NET_NBR_H
 
 #include <stddef.h>
-#include <stdint.h>
+#include <zephyr/types.h>
 #include <stdbool.h>
 
 #include <net/net_if.h>
@@ -151,7 +151,7 @@ struct net_nbr *net_nbr_ref(struct net_nbr *nbr);
 /**
  * @brief Get a free neighbor from specific table.
  * @param table Neighbor table
- * @return Pointer to neighbor, NULL if no free neigtbors
+ * @return Pointer to neighbor, NULL if no free neighbors
  */
 struct net_nbr *net_nbr_get(struct net_nbr_table *table);
 

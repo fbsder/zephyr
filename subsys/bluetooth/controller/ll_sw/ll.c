@@ -5,7 +5,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#include <stdint.h>
+#include <zephyr/types.h>
 #include <string.h>
 
 #include <soc.h>
@@ -37,41 +37,41 @@
 #include "ll.h"
 
 /* Global singletons */
-static uint8_t MALIGN(4) _rand_context[3 + 4 + 1];
-static uint8_t MALIGN(4) _ticker_nodes[RADIO_TICKER_NODES][TICKER_NODE_T_SIZE];
-static uint8_t MALIGN(4) _ticker_users[MAYFLY_CALLER_COUNT]
+static u8_t MALIGN(4) _rand_context[3 + 4 + 1];
+static u8_t MALIGN(4) _ticker_nodes[RADIO_TICKER_NODES][TICKER_NODE_T_SIZE];
+static u8_t MALIGN(4) _ticker_users[MAYFLY_CALLER_COUNT]
 						[TICKER_USER_T_SIZE];
-static uint8_t MALIGN(4) _ticker_user_ops[RADIO_TICKER_USER_OPS]
+static u8_t MALIGN(4) _ticker_user_ops[RADIO_TICKER_USER_OPS]
 						[TICKER_USER_OP_T_SIZE];
-static uint8_t MALIGN(4) _radio[LL_MEM_TOTAL];
+static u8_t MALIGN(4) _radio[LL_MEM_TOTAL];
 
 static struct k_sem *sem_recv;
 
 static struct {
-	uint8_t pub_addr[BDADDR_SIZE];
-	uint8_t rnd_addr[BDADDR_SIZE];
+	u8_t pub_addr[BDADDR_SIZE];
+	u8_t rnd_addr[BDADDR_SIZE];
 } _ll_context;
 
 static struct {
-	uint16_t interval;
-	uint8_t adv_type:4;
-	uint8_t tx_addr:1;
-	uint8_t rx_addr:1;
-	uint8_t filter_policy:2;
-	uint8_t chl_map:3;
-	uint8_t adv_addr[BDADDR_SIZE];
-	uint8_t direct_addr[BDADDR_SIZE];
+	u16_t interval;
+	u8_t adv_type:4;
+	u8_t tx_addr:1;
+	u8_t rx_addr:1;
+	u8_t filter_policy:2;
+	u8_t chl_map:3;
+	u8_t adv_addr[BDADDR_SIZE];
+	u8_t direct_addr[BDADDR_SIZE];
 } _ll_adv_params;
 
 static struct {
-	uint16_t interval;
-	uint16_t window;
-	uint8_t scan_type:1;
-	uint8_t tx_addr:1;
-	uint8_t filter_policy:1;
+	u16_t interval;
+	u16_t window;
+	u8_t scan_type:1;
+	u8_t tx_addr:1;
+	u8_t filter_policy:1;
 } _ll_scan_params;
 
-void mayfly_enable_cb(uint8_t caller_id, uint8_t callee_id, uint8_t enable)
+void mayfly_enable_cb(u8_t caller_id, u8_t callee_id, u8_t enable)
 {
 	(void)caller_id;
 
@@ -84,7 +84,7 @@ void mayfly_enable_cb(uint8_t caller_id, uint8_t callee_id, uint8_t enable)
 	}
 }
 
-uint32_t mayfly_is_enabled(uint8_t caller_id, uint8_t callee_id)
+u32_t mayfly_is_enabled(u8_t caller_id, u8_t callee_id)
 {
 	(void)caller_id;
 
@@ -99,7 +99,7 @@ uint32_t mayfly_is_enabled(uint8_t caller_id, uint8_t callee_id)
 	return 0;
 }
 
-uint32_t mayfly_prio_is_equal(uint8_t caller_id, uint8_t callee_id)
+u32_t mayfly_prio_is_equal(u8_t caller_id, u8_t callee_id)
 {
 	return (caller_id == callee_id) ||
 	       ((caller_id == MAYFLY_CALL_ID_0) &&
@@ -108,7 +108,7 @@ uint32_t mayfly_prio_is_equal(uint8_t caller_id, uint8_t callee_id)
 		(callee_id == MAYFLY_CALL_ID_0));
 }
 
-void mayfly_pend(uint8_t caller_id, uint8_t callee_id)
+void mayfly_pend(u8_t caller_id, u8_t callee_id)
 {
 	(void)caller_id;
 
@@ -128,7 +128,7 @@ void mayfly_pend(uint8_t caller_id, uint8_t callee_id)
 	}
 }
 
-void radio_active_callback(uint8_t active)
+void radio_active_callback(u8_t active)
 {
 }
 
@@ -147,7 +147,7 @@ ISR_DIRECT_DECLARE(radio_nrf5_isr)
 
 static void rtc0_nrf5_isr(void *arg)
 {
-	uint32_t compare0, compare1;
+	u32_t compare0, compare1;
 
 	/* store interested events */
 	compare0 = NRF_RTC0->EVENTS_COMPARE[0];
@@ -184,7 +184,7 @@ int ll_init(struct k_sem *sem_rx)
 {
 	struct device *clk_k32;
 	struct device *clk_m16;
-	uint32_t err;
+	u32_t err;
 
 	sem_recv = sem_rx;
 
@@ -246,7 +246,7 @@ int ll_init(struct k_sem *sem_rx)
 	return 0;
 }
 
-void ll_address_get(uint8_t addr_type, uint8_t *bdaddr)
+void ll_address_get(u8_t addr_type, u8_t *bdaddr)
 {
 	if (addr_type) {
 		memcpy(bdaddr, &_ll_context.rnd_addr[0], BDADDR_SIZE);
@@ -255,7 +255,7 @@ void ll_address_get(uint8_t addr_type, uint8_t *bdaddr)
 	}
 }
 
-void ll_address_set(uint8_t addr_type, uint8_t const *const bdaddr)
+void ll_address_set(u8_t addr_type, u8_t const *const bdaddr)
 {
 	if (addr_type) {
 		memcpy(&_ll_context.rnd_addr[0], bdaddr, BDADDR_SIZE);
@@ -264,10 +264,10 @@ void ll_address_set(uint8_t addr_type, uint8_t const *const bdaddr)
 	}
 }
 
-void ll_adv_params_set(uint16_t interval, uint8_t adv_type,
-		       uint8_t own_addr_type, uint8_t direct_addr_type,
-		       uint8_t const *const direct_addr, uint8_t chl_map,
-		       uint8_t filter_policy)
+void ll_adv_params_set(u16_t interval, u8_t adv_type,
+		       u8_t own_addr_type, u8_t direct_addr_type,
+		       u8_t const *const direct_addr, u8_t chl_map,
+		       u8_t filter_policy)
 {
 	struct radio_adv_data *radio_adv_data;
 	struct pdu_adv *pdu;
@@ -293,7 +293,15 @@ void ll_adv_params_set(uint16_t interval, uint8_t adv_type,
 	pdu = (struct pdu_adv *)&radio_adv_data->data[radio_adv_data->last][0];
 	pdu->type = _ll_adv_params.adv_type;
 	pdu->rfu = 0;
-	pdu->ch_sel = 0;
+
+	if (IS_ENABLED(CONFIG_BLUETOOTH_CONTROLLER_CHAN_SEL_2) &&
+	    ((adv_type == PDU_ADV_TYPE_ADV_IND) ||
+	     (adv_type == PDU_ADV_TYPE_DIRECT_IND))) {
+		pdu->chan_sel = 1;
+	} else {
+		pdu->chan_sel = 0;
+	}
+
 	pdu->tx_addr = _ll_adv_params.tx_addr;
 	if (adv_type == PDU_ADV_TYPE_DIRECT_IND) {
 		_ll_adv_params.rx_addr = direct_addr_type;
@@ -313,7 +321,7 @@ void ll_adv_params_set(uint16_t interval, uint8_t adv_type,
 	pdu = (struct pdu_adv *)&radio_adv_data->data[radio_adv_data->last][0];
 	pdu->type = PDU_ADV_TYPE_SCAN_RSP;
 	pdu->rfu = 0;
-	pdu->ch_sel = 0;
+	pdu->chan_sel = 0;
 	pdu->tx_addr = _ll_adv_params.tx_addr;
 	pdu->rx_addr = 0;
 	if (pdu->len == 0) {
@@ -322,11 +330,11 @@ void ll_adv_params_set(uint16_t interval, uint8_t adv_type,
 	pdu->resv = 0;
 }
 
-void ll_adv_data_set(uint8_t len, uint8_t const *const data)
+void ll_adv_data_set(u8_t len, u8_t const *const data)
 {
 	struct radio_adv_data *radio_adv_data;
 	struct pdu_adv *pdu;
-	uint8_t last;
+	u8_t last;
 
 	/** @todo dont update data if directed adv type. */
 
@@ -345,7 +353,15 @@ void ll_adv_data_set(uint8_t len, uint8_t const *const data)
 	pdu = (struct pdu_adv *)&radio_adv_data->data[last][0];
 	pdu->type = _ll_adv_params.adv_type;
 	pdu->rfu = 0;
-	pdu->ch_sel = 0;
+
+	if (IS_ENABLED(CONFIG_BLUETOOTH_CONTROLLER_CHAN_SEL_2) &&
+	    ((_ll_adv_params.adv_type == PDU_ADV_TYPE_ADV_IND) ||
+	     (_ll_adv_params.adv_type == PDU_ADV_TYPE_DIRECT_IND))) {
+		pdu->chan_sel = 1;
+	} else {
+		pdu->chan_sel = 0;
+	}
+
 	pdu->tx_addr = _ll_adv_params.tx_addr;
 	pdu->rx_addr = _ll_adv_params.rx_addr;
 	memcpy(&pdu->payload.adv_ind.addr[0],
@@ -364,11 +380,11 @@ void ll_adv_data_set(uint8_t len, uint8_t const *const data)
 	radio_adv_data->last = last;
 }
 
-void ll_scan_data_set(uint8_t len, uint8_t const *const data)
+void ll_scan_data_set(u8_t len, u8_t const *const data)
 {
 	struct radio_adv_data *radio_scan_data;
 	struct pdu_adv *pdu;
-	uint8_t last;
+	u8_t last;
 
 	/* use the last index in double buffer, */
 	radio_scan_data = radio_scan_data_get();
@@ -385,7 +401,7 @@ void ll_scan_data_set(uint8_t len, uint8_t const *const data)
 	pdu = (struct pdu_adv *)&radio_scan_data->data[last][0];
 	pdu->type = PDU_ADV_TYPE_SCAN_RSP;
 	pdu->rfu = 0;
-	pdu->ch_sel = 0;
+	pdu->chan_sel = 0;
 	pdu->tx_addr = _ll_adv_params.tx_addr;
 	pdu->rx_addr = 0;
 	pdu->len = BDADDR_SIZE + len;
@@ -398,9 +414,9 @@ void ll_scan_data_set(uint8_t len, uint8_t const *const data)
 	radio_scan_data->last = last;
 }
 
-uint32_t ll_adv_enable(uint8_t enable)
+u32_t ll_adv_enable(u8_t enable)
 {
-	uint32_t status;
+	u32_t status;
 
 	if (enable) {
 		struct radio_adv_data *radio_adv_data;
@@ -448,8 +464,8 @@ uint32_t ll_adv_enable(uint8_t enable)
 	return status;
 }
 
-void ll_scan_params_set(uint8_t scan_type, uint16_t interval, uint16_t window,
-			uint8_t own_addr_type, uint8_t filter_policy)
+void ll_scan_params_set(u8_t scan_type, u16_t interval, u16_t window,
+			u8_t own_addr_type, u8_t filter_policy)
 {
 	_ll_scan_params.scan_type = scan_type;
 	_ll_scan_params.interval = interval;
@@ -458,9 +474,9 @@ void ll_scan_params_set(uint8_t scan_type, uint16_t interval, uint16_t window,
 	_ll_scan_params.filter_policy = filter_policy;
 }
 
-uint32_t ll_scan_enable(uint8_t enable)
+u32_t ll_scan_enable(u8_t enable)
 {
-	uint32_t status;
+	u32_t status;
 
 	if (enable) {
 		status = radio_scan_enable(_ll_scan_params.scan_type,
@@ -478,13 +494,13 @@ uint32_t ll_scan_enable(uint8_t enable)
 	return status;
 }
 
-uint32_t ll_create_connection(uint16_t scan_interval, uint16_t scan_window,
-			      uint8_t filter_policy, uint8_t peer_addr_type,
-			      uint8_t *peer_addr, uint8_t own_addr_type,
-			      uint16_t interval, uint16_t latency,
-			      uint16_t timeout)
+u32_t ll_create_connection(u16_t scan_interval, u16_t scan_window,
+			      u8_t filter_policy, u8_t peer_addr_type,
+			      u8_t *peer_addr, u8_t own_addr_type,
+			      u16_t interval, u16_t latency,
+			      u16_t timeout)
 {
-	uint32_t status;
+	u32_t status;
 
 	status = radio_connect_enable(peer_addr_type, peer_addr, interval,
 					latency, timeout);

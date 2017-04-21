@@ -33,19 +33,25 @@
 #endif
 
 #if defined(CONFIG_BLUETOOTH_CONTROLLER_LE_PING)
-#define RADIO_BLE_FEATURES_BIT_PING BIT(BT_LE_FEAT_BIT_PING)
+#define RADIO_BLE_FEAT_BIT_PING BIT(BT_LE_FEAT_BIT_PING)
 #else /* !CONFIG_BLUETOOTH_CONTROLLER_LE_PING */
-#define RADIO_BLE_FEATURES_BIT_PING 0
+#define RADIO_BLE_FEAT_BIT_PING 0
 #endif /* !CONFIG_BLUETOOTH_CONTROLLER_LE_PING */
 
 #if defined(CONFIG_BLUETOOTH_CONTROLLER_DATA_LENGTH_MAX)
-#define RADIO_BLE_FEATURES_BIT_DLE BIT(BT_LE_FEAT_BIT_DLE)
+#define RADIO_BLE_FEAT_BIT_DLE BIT(BT_LE_FEAT_BIT_DLE)
 #define RADIO_LL_LENGTH_OCTETS_RX_MAX \
 		CONFIG_BLUETOOTH_CONTROLLER_DATA_LENGTH_MAX
 #else
-#define RADIO_BLE_FEATURES_BIT_DLE 0
+#define RADIO_BLE_FEAT_BIT_DLE 0
 #define RADIO_LL_LENGTH_OCTETS_RX_MAX 27
 #endif /* CONFIG_BLUETOOTH_CONTROLLER_DATA_LENGTH_MAX */
+
+#if defined(CONFIG_BLUETOOTH_CONTROLLER_CHAN_SEL_2)
+#define RADIO_BLE_FEAT_BIT_CHAN_SEL_2 BIT(BT_LE_FEAT_BIT_CHAN_SEL_ALGO_2)
+#else /* !CONFIG_BLUETOOTH_CONTROLLER_CHAN_SEL_2 */
+#define RADIO_BLE_FEAT_BIT_CHAN_SEL_2 0
+#endif /* !CONFIG_BLUETOOTH_CONTROLLER_CHAN_SEL_2 */
 
 /*****************************************************************************
  * Timer Resources (Controller defined)
@@ -96,12 +102,15 @@
 #define RADIO_BLE_SUB_VERSION_NUMBER    0xFFFF
 #endif
 
-#define RADIO_BLE_FEATURES              (BIT(BT_LE_FEAT_BIT_ENC) | \
+#define RADIO_BLE_FEAT_BIT_MASK         0x1FFFF
+#define RADIO_BLE_FEAT_BIT_MASK_VALID   0x1CF2F
+#define RADIO_BLE_FEAT                  (BIT(BT_LE_FEAT_BIT_ENC) | \
 					 BIT(BT_LE_FEAT_BIT_CONN_PARAM_REQ) | \
 					 BIT(BT_LE_FEAT_BIT_EXT_REJ_IND) | \
 					 BIT(BT_LE_FEAT_BIT_SLAVE_FEAT_REQ) | \
-					 RADIO_BLE_FEATURES_BIT_PING | \
-					 RADIO_BLE_FEATURES_BIT_DLE)
+					 RADIO_BLE_FEAT_BIT_PING | \
+					 RADIO_BLE_FEAT_BIT_DLE | \
+					 RADIO_BLE_FEAT_BIT_CHAN_SEL_2)
 
 #if defined(CONFIG_BLUETOOTH_CONTROLLER_WORKER_PRIO)
 #define RADIO_TICKER_USER_ID_WORKER_PRIO CONFIG_BLUETOOTH_CONTROLLER_WORKER_PRIO
@@ -176,35 +185,14 @@
  * Controller Interface Structures
  ****************************************************************************/
 struct radio_adv_data {
-	uint8_t data[DOUBLE_BUFFER_SIZE][PDU_AC_SIZE_MAX];
-	uint8_t first;
-	uint8_t last;
+	u8_t data[DOUBLE_BUFFER_SIZE][PDU_AC_SIZE_MAX];
+	u8_t first;
+	u8_t last;
 };
-
-struct radio_le_conn_cmplt {
-	uint8_t status;
-	uint8_t role;
-	uint8_t peer_addr_type;
-	uint8_t peer_addr[BDADDR_SIZE];
-	uint8_t own_addr_type;
-	uint8_t own_addr[BDADDR_SIZE];
-	uint8_t peer_irk_index;
-	uint16_t interval;
-	uint16_t latency;
-	uint16_t timeout;
-	uint8_t mca;
-} __packed;
-
-struct radio_le_conn_update_cmplt {
-	uint8_t status;
-	uint16_t interval;
-	uint16_t latency;
-	uint16_t timeout;
-} __packed;
 
 struct radio_pdu_node_tx {
 	void *next;
-	uint8_t pdu_data[1];
+	u8_t pdu_data[1];
 };
 
 enum radio_pdu_node_rx_type {
@@ -220,6 +208,8 @@ enum radio_pdu_node_rx_type {
 	NODE_RX_TYPE_APTO,
 #endif /* CONFIG_BLUETOOTH_CONTROLLER_LE_PING */
 
+	NODE_RX_TYPE_CHAN_SEL_ALGO,
+
 #if defined(CONFIG_BLUETOOTH_CONTROLLER_CONN_RSSI)
 	NODE_RX_TYPE_RSSI,
 #endif /* CONFIG_BLUETOOTH_CONTROLLER_CONN_RSSI */
@@ -233,58 +223,83 @@ enum radio_pdu_node_rx_type {
 #endif /* CONFIG_BLUETOOTH_CONTROLLER_ADV_INDICATION */
 };
 
+struct radio_le_conn_cmplt {
+	u8_t status;
+	u8_t role;
+	u8_t peer_addr_type;
+	u8_t peer_addr[BDADDR_SIZE];
+	u8_t own_addr_type;
+	u8_t own_addr[BDADDR_SIZE];
+	u8_t peer_irk_index;
+	u16_t interval;
+	u16_t latency;
+	u16_t timeout;
+	u8_t mca;
+} __packed;
+
+struct radio_le_conn_update_cmplt {
+	u8_t status;
+	u16_t interval;
+	u16_t latency;
+	u16_t timeout;
+} __packed;
+
+struct radio_le_chan_sel_algo {
+	u8_t chan_sel_algo;
+} __packed;
+
 struct radio_pdu_node_rx_hdr {
 	union {
 		void *next; /* used also by k_fifo once pulled */
 		void *link;
-		uint8_t packet_release_last;
+		u8_t packet_release_last;
 	} onion;
 
 	enum radio_pdu_node_rx_type type;
-	uint16_t handle;
+	u16_t handle;
 };
 
 struct radio_pdu_node_rx {
 	struct radio_pdu_node_rx_hdr hdr;
-	uint8_t pdu_data[1];
+	u8_t pdu_data[1];
 };
 
 /*****************************************************************************
  * Controller Interface Functions
  ****************************************************************************/
 /* Downstream */
-uint32_t radio_init(void *hf_clock, uint8_t sca, uint8_t connection_count_max,
-		    uint8_t rx_count_max, uint8_t tx_count_max,
-		    uint16_t packet_data_octets_max,
-		    uint16_t packet_tx_data_size, uint8_t *mem_radio,
-		    uint16_t mem_size);
-void radio_ticks_active_to_start_set(uint32_t ticks_active_to_start);
+u32_t radio_init(void *hf_clock, u8_t sca, u8_t connection_count_max,
+		    u8_t rx_count_max, u8_t tx_count_max,
+		    u16_t packet_data_octets_max,
+		    u16_t packet_tx_data_size, u8_t *mem_radio,
+		    u16_t mem_size);
+void radio_ticks_active_to_start_set(u32_t ticks_active_to_start);
 struct radio_adv_data *radio_adv_data_get(void);
 struct radio_adv_data *radio_scan_data_get(void);
-uint32_t radio_adv_enable(uint16_t interval, uint8_t chl_map,
-		uint8_t filter_policy);
-uint32_t radio_adv_disable(void);
-uint32_t radio_scan_enable(uint8_t scan_type, uint8_t init_addr_type,
-		uint8_t *init_addr, uint16_t interval,
-		uint16_t window, uint8_t filter_policy);
-uint32_t radio_scan_disable(void);
+u32_t radio_adv_enable(u16_t interval, u8_t chl_map,
+		u8_t filter_policy);
+u32_t radio_adv_disable(void);
+u32_t radio_scan_enable(u8_t scan_type, u8_t init_addr_type,
+		u8_t *init_addr, u16_t interval,
+		u16_t window, u8_t filter_policy);
+u32_t radio_scan_disable(void);
 
-uint32_t radio_connect_enable(uint8_t adv_addr_type, uint8_t *adv_addr,
-		uint16_t interval, uint16_t latency,
-			      uint16_t timeout);
+u32_t radio_connect_enable(u8_t adv_addr_type, u8_t *adv_addr,
+		u16_t interval, u16_t latency,
+			      u16_t timeout);
 /* Upstream */
-uint8_t radio_rx_get(struct radio_pdu_node_rx **radio_pdu_node_rx,
-		uint16_t *handle);
+u8_t radio_rx_get(struct radio_pdu_node_rx **radio_pdu_node_rx,
+		u16_t *handle);
 void radio_rx_dequeue(void);
 void radio_rx_mem_release(struct radio_pdu_node_rx **radio_pdu_node_rx);
-uint8_t radio_rx_fc_set(uint16_t handle, uint8_t fc);
-uint8_t radio_rx_fc_get(uint16_t *handle);
+u8_t radio_rx_fc_set(u16_t handle, u8_t fc);
+u8_t radio_rx_fc_get(u16_t *handle);
 struct radio_pdu_node_tx *radio_tx_mem_acquire(void);
 void radio_tx_mem_release(struct radio_pdu_node_tx *pdu_data_node_tx);
-uint32_t radio_tx_mem_enqueue(uint16_t handle,
+u32_t radio_tx_mem_enqueue(u16_t handle,
 		struct radio_pdu_node_tx *pdu_data_node_tx);
 /* Callbacks */
-extern void radio_active_callback(uint8_t active);
+extern void radio_active_callback(u8_t active);
 extern void radio_event_callback(void);
 
 #endif

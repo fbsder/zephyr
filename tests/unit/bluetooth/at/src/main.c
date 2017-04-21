@@ -4,13 +4,13 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#include <stdint.h>
+#include <zephyr/types.h>
 #include <stddef.h>
 #include <string.h>
 
 #include <net/buf.h>
 
-#include "../../../../subsys/bluetooth/host/at.h"
+#include "subsys/bluetooth/host/at.h"
 
 #include <ztest.h>
 

@@ -68,7 +68,7 @@ config BLUETOOTH_CONTROLLER_TX_BUFFER_SIZE
 	  then controller will perform fragmentation before transmitting on the
 	  the packet on air.
 	  Maximum is set to 16384 due to implementation limitations (use of
-	  uint16_t for size/length variables).
+	  u16_t for size/length variables).
 
 config BLUETOOTH_CONTROLLER_COMPANY_ID
 	prompt "Company Id"
@@ -113,6 +113,13 @@ config BLUETOOTH_CONTROLLER_DATA_LENGTH_MAX
 	range 27 251
 	help
 	  Set the maximum data length of PDU supported in the Controller.
+
+config BLUETOOTH_CONTROLLER_CHAN_SEL_2
+	bool "Channel Selection Algorithm #2"
+	default y
+	help
+	  Enable support for Bluetooth 5.0 LE Channel Selection Algorithm #2 in
+	  the Controller.
 
 config BLUETOOTH_CONTROLLER_ADVANCED_FEATURES
 	bool "Show advanced features"

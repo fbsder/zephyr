@@ -5,7 +5,7 @@ VERSION_RESERVED   = 0
 EXTRAVERSION       =
 NAME 		   = Zephyr Kernel
 
-export SOURCE_DIR PROJECT MDEF_FILE
+export SOURCE_DIR PROJECT
 
 ifeq ($(MAKECMDGOALS),)
 $(error Invoking make from top-level kernel directory is not supported)
@@ -373,7 +373,6 @@ ZEPHYRINCLUDE    = \
 		$(if $(KBUILD_SRC), -I$(srctree)/include) \
 		-I$(srctree)/include \
 		-I$(CURDIR)/include/generated \
-		-I$(CURDIR)/misc/generated/sysgen \
 		$(USERINCLUDE) \
 		$(STDINCLUDE)
 
@@ -920,6 +919,33 @@ rom_report: $(KERNEL_STAT_NAME)
 
 zephyr: $(zephyr-deps) $(KERNEL_BIN_NAME)
 
+ifeq ($(CONFIG_HAS_DTS),y)
+define filechk_generated_dts_board.h
+	(echo "/* WARNING. THIS FILE IS AUTO-GENERATED. DO NOT MODIFY! */"; \
+		$(ZEPHYR_BASE)/scripts/extract_dts_includes.py dts/$(ARCH)/$(BOARD_NAME).dts_compiled $(ZEPHYR_BASE)/dts/$(ARCH)/yaml; \
+		if test -e $(ZEPHYR_BASE)/dts/$(ARCH)/$(BOARD_NAME).fixup; then \
+			echo; echo; \
+			echo "/* Following definitions fixup the generated include */"; \
+			echo; \
+			cat $(ZEPHYR_BASE)/dts/$(ARCH)/$(BOARD_NAME).fixup; \
+		fi; \
+		)
+endef
+else
+define filechk_generated_dts_board.h
+	(echo "/* WARNING. THIS FILE IS AUTO-GENERATED. DO NOT MODIFY! */";)
+endef
+endif
+
+
+include/generated/generated_dts_board.h: include/config/auto.conf FORCE
+ifeq ($(CONFIG_HAS_DTS),y)
+	$(Q)$(MAKE) $(build)=dts/$(ARCH)
+endif
+	$(call filechk,generated_dts_board.h)
+
+dts: include/generated/generated_dts_board.h
+
 # The actual objects are generated when descending,
 # make sure no implicit rule kicks in
 $(sort $(zephyr-deps)): $(zephyr-dirs) zephyr-app-dir ;
@@ -977,7 +1003,7 @@ archprepare = $(strip \
 		)
 
 # All the preparing..
-prepare: $(archprepare)  FORCE
+prepare: $(archprepare) dts FORCE
 	$(Q)$(MAKE) $(build)=.
 
 # Generate some files
@@ -1034,12 +1060,7 @@ depend dep:
 # Directories & files removed with 'make clean'
 CLEAN_DIRS  += $(MODVERDIR)
 
-CLEAN_FILES += 	misc/generated/sysgen/kernel_main.c \
-		misc/generated/sysgen/sysgen.h \
-		misc/generated/sysgen/prj.mdef \
-		misc/generated/sysgen/micro_private_types.h \
-		misc/generated/sysgen/kernel_main.h \
-		include/generated/generated_dts_board.h \
+CLEAN_FILES += 	include/generated/generated_dts_board.h \
 		.old_version .tmp_System.map .tmp_version \
 		.tmp_* System.map *.lnk *.map *.elf *.lst \
 		*.bin *.hex *.stat *.strip staticIdt.o linker.cmd

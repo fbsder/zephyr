@@ -15,8 +15,7 @@
 
 #if !defined(_ASMLANGUAGE)
 #include <stddef.h>
-#include <stdint.h>
-#include <inttypes.h>
+#include <zephyr/types.h>
 #include <limits.h>
 #include <toolchain.h>
 #include <sections.h>
@@ -3553,10 +3552,6 @@ extern void k_cpu_atomic_idle(unsigned int key);
 
 extern void _sys_power_save_idle_exit(int32_t ticks);
 
-/* Include legacy APIs */
-#if defined(CONFIG_LEGACY_KERNEL)
-#include <legacy.h>
-#endif
 #include <arch/cpu.h>
 
 /*
