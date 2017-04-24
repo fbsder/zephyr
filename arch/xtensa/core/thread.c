@@ -15,41 +15,6 @@
 
 extern void _xt_user_exit(void);
 
-#if defined(CONFIG_THREAD_MONITOR)
-#define THREAD_MONITOR_INIT(thread) _thread_monitor_init(thread)
-#else
-#define THREAD_MONITOR_INIT(thread) \
-	do {/* do nothing */     \
-	} while ((0))
-#endif
-
-#if defined(CONFIG_THREAD_MONITOR)
-/**
- *
- * @brief Initialize thread monitoring support
- *
- * Currently only inserts the new thread in the list of active threads.
- *
- * @return N/A
- */
-
-static inline void _thread_monitor_init(struct k_thread *thread)
-{
-	unsigned int key;
-
-	/*
-	 * Add the newly initialized thread to head of the list of threads.
-	 * This singly linked list of threads maintains ALL the threads in the
-	 * system regardless of whether they are runnable.
-	 */
-
-	key = irq_lock();
-	thread->next_thread = _nanokernel.threads;
-	_nanokernel.threads = thread;
-	irq_unlock(key);
-}
-#endif /* CONFIG_THREAD_MONITOR */
-
 /*
  * @brief Initialize a new thread from its stack space
  *
@@ -86,25 +51,24 @@ void _new_thread(char *pStack, size_t stackSize,
 	/* k_thread is located at top of stack while frames are located at end
 	 * of it
 	 */
-	struct k_thread *thread = (struct k_thread *)(pStack);
+	struct k_thread *thread;
 #if XCHAL_CP_NUM > 0
-	uint32_t *cpSA;
+	u32_t *cpSA;
 	char *cpStack;
 #endif
+
+	thread = _new_thread_init(pStack, stackSize, priority, options);
 
 #ifdef CONFIG_DEBUG
 	printk("\nstackPtr = %p, stackSize = %d\n", pStack, stackSize);
 	printk("stackEnd = %p\n", stackEnd);
-#endif
-#ifdef CONFIG_INIT_STACKS
-	memset(pStack, 0xaa, stackSize);
 #endif
 #if XCHAL_CP_NUM > 0
 	/* Ensure CP state descriptor is correctly initialized */
 	cpStack = thread->arch.preempCoprocReg.cpStack; /* short hand alias */
 	memset(cpStack, 0, XT_CP_ASA); /* Set to zero to avoid bad surprises */
 	/* Coprocessor's stack is allocated just after the k_thread */
-	cpSA = (uint32_t *)(thread->arch.preempCoprocReg.cpStack + XT_CP_ASA);
+	cpSA = (u32_t *)(thread->arch.preempCoprocReg.cpStack + XT_CP_ASA);
 	/* Coprocessor's save area alignment is at leat 16 bytes */
 	*cpSA = ROUND_UP(cpSA + 1,
 		(XCHAL_TOTAL_SA_ALIGN < 16 ? 16 : XCHAL_TOTAL_SA_ALIGN));
@@ -125,43 +89,35 @@ void _new_thread(char *pStack, size_t stackSize,
 	/* Explicitly initialize certain saved registers */
 
 	 /* task entrypoint */
-	pInitCtx->pc   = (uint32_t)_thread_entry;
+	pInitCtx->pc   = (u32_t)_thread_entry;
 
 	/* physical top of stack frame */
-	pInitCtx->a1   = (uint32_t)pInitCtx + XT_STK_FRMSZ;
+	pInitCtx->a1   = (u32_t)pInitCtx + XT_STK_FRMSZ;
 
 	/* user exception exit dispatcher */
-	pInitCtx->exit = (uint32_t)_xt_user_exit;
+	pInitCtx->exit = (u32_t)_xt_user_exit;
 
 	/* Set initial PS to int level 0, EXCM disabled, user mode.
 	 * Also set entry point argument arg.
 	 */
 #ifdef __XTENSA_CALL0_ABI__
-	pInitCtx->a2 = (uint32_t)pEntry;
-	pInitCtx->a3 = (uint32_t)p1;
-	pInitCtx->a4 = (uint32_t)p2;
-	pInitCtx->a5 = (uint32_t)p3;
+	pInitCtx->a2 = (u32_t)pEntry;
+	pInitCtx->a3 = (u32_t)p1;
+	pInitCtx->a4 = (u32_t)p2;
+	pInitCtx->a5 = (u32_t)p3;
 	pInitCtx->ps = PS_UM | PS_EXCM;
 #else
 	/* For windowed ABI set also WOE and CALLINC
 	 * (pretend task is 'call4')
 	 */
-	pInitCtx->a6 = (uint32_t)pEntry;
-	pInitCtx->a7 = (uint32_t)p1;
-	pInitCtx->a8 = (uint32_t)p2;
-	pInitCtx->a9 = (uint32_t)p3;
+	pInitCtx->a6 = (u32_t)pEntry;
+	pInitCtx->a7 = (u32_t)p1;
+	pInitCtx->a8 = (u32_t)p2;
+	pInitCtx->a9 = (u32_t)p3;
 	pInitCtx->ps = PS_UM | PS_EXCM | PS_WOE | PS_CALLINC(1);
 #endif
 	thread->callee_saved.topOfStack = pInitCtx;
 	thread->arch.flags = 0;
-	_init_thread_base(&thread->base, prio, _THREAD_PRESTART, options);
-	/* static threads overwrite it afterwards with real value */
-	thread->init_data = NULL;
-	thread->fn_abort = NULL;
-#ifdef CONFIG_THREAD_CUSTOM_DATA
-	/* Initialize custom data field (value is opaque to kernel) */
-	thread->custom_data = NULL;
-#endif
 #ifdef CONFIG_THREAD_MONITOR
 	/*
 	 * In debug mode thread->entry give direct access to the thread entry
@@ -173,6 +129,6 @@ void _new_thread(char *pStack, size_t stackSize,
 	 * irrelevant
 	 */
 
-	THREAD_MONITOR_INIT(thread);
+	thread_monitor_init(thread);
 }
 

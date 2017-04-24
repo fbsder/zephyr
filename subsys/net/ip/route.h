@@ -60,7 +60,7 @@ struct net_route_entry {
 	struct in6_addr addr;
 
 	/** IPv6 address/prefix length. */
-	uint8_t prefix_len;
+	u8_t prefix_len;
 };
 
 /**
@@ -87,7 +87,7 @@ struct net_route_entry *net_route_lookup(struct net_if *iface,
  */
 struct net_route_entry *net_route_add(struct net_if *iface,
 				      struct in6_addr *addr,
-				      uint8_t prefix_len,
+				      u8_t prefix_len,
 				      struct in6_addr *nexthop);
 
 /**
@@ -178,7 +178,7 @@ struct net_route_entry_mcast {
 	struct in6_addr group;
 
 	/** Routing entry lifetime in seconds. */
-	uint32_t lifetime;
+	u32_t lifetime;
 
 	/** Is this entry in user or not */
 	bool is_used;
@@ -251,12 +251,12 @@ bool net_route_get_info(struct net_if *iface,
 /**
  * @brief Send the network packet to network via some intermediate host.
  *
- * @param buf Network buffer to send.
+ * @param pkt Network packet to send.
  * @param nexthop Next hop neighbor IPv6 address.
  *
  * @return 0 if there was no error, <0 if the packet could not be sent.
  */
-int net_route_packet(struct net_buf *buf, struct in6_addr *nexthop);
+int net_route_packet(struct net_pkt *pkt, struct in6_addr *nexthop);
 
 #else /* CONFIG_NET_ROUTE */
 #define net_route_init(...)

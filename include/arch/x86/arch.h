@@ -339,6 +339,10 @@ typedef struct nanoIsf {
 #define _NANO_ERR_ALLOCATION_FAIL    (5)
 /** Unhandled exception */
 #define _NANO_ERR_CPU_EXCEPTION		(6)
+/** Kernel oops (fatal to thread) */
+#define _NANO_ERR_KERNEL_OOPS		(7)
+/** Kernel panic (fatal to system) */
+#define _NANO_ERR_KERNEL_PANIC		(8)
 
 #ifndef _ASMLANGUAGE
 
@@ -488,17 +492,31 @@ extern void k_float_disable(k_tid_t thread);
 
 extern void	k_cpu_idle(void);
 
-extern uint32_t _timer_cycle_get_32(void);
+extern u32_t _timer_cycle_get_32(void);
 #define _arch_k_cycle_get_32()	_timer_cycle_get_32()
 
 /** kernel provided routine to report any detected fatal error. */
 extern FUNC_NORETURN void _NanoFatalErrorHandler(unsigned int reason,
 						 const NANO_ESF * pEsf);
+
 /** User provided routine to handle any detected fatal error post reporting. */
 extern FUNC_NORETURN void _SysFatalErrorHandler(unsigned int reason,
 						const NANO_ESF * pEsf);
+
+#if CONFIG_X86_KERNEL_OOPS
+#define _ARCH_EXCEPT(reason_p) do { \
+	__asm__ volatile( \
+		"push %[reason]\n\t" \
+		"int %[vector]\n\t" \
+		: \
+		: [vector] "i" (CONFIG_X86_KERNEL_OOPS_VECTOR), \
+		  [reason] "i" (reason_p)); \
+	CODE_UNREACHABLE; \
+} while (0)
+#else
 /** Dummy ESF for fatal errors that would otherwise not have an ESF */
 extern const NANO_ESF _default_esf;
+#endif /* CONFIG_X86_KERNEL_OOPS */
 
 #endif /* !_ASMLANGUAGE */
 

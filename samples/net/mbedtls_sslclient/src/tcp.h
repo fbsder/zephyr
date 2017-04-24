@@ -9,17 +9,17 @@
 
 #include <net/net_context.h>
 #include <net/net_ip.h>
-#include <net/buf.h>
+#include <net/net_pkt.h>
 
 struct tcp_context {
 	struct net_context *net_ctx;
 	struct sockaddr local_sock;
-	struct net_buf *rx_nbuf;
-	int32_t timeout;
+	struct net_pkt *rx_pkt;
+	s32_t timeout;
 };
 
 int tcp_init(struct tcp_context *ctx, const char *server_addr,
-		uint16_t server_port);
+		u16_t server_port);
 
 int tcp_tx(void *ctx, const unsigned char *buf, size_t size);
 int tcp_rx(void *ctx, unsigned char *buf, size_t size);

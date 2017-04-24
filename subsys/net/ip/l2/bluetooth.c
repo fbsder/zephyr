@@ -19,7 +19,7 @@
 #include <device.h>
 #include <init.h>
 
-#include <net/nbuf.h>
+#include <net/net_pkt.h>
 #include <net/net_core.h>
 #include <net/net_l2.h>
 #include <net/net_if.h>
@@ -50,11 +50,11 @@ struct bt_context {
 	bt_addr_t dst;
 };
 
-static enum net_verdict net_bt_recv(struct net_if *iface, struct net_buf *buf)
+static enum net_verdict net_bt_recv(struct net_if *iface, struct net_pkt *pkt)
 {
-	NET_DBG("iface %p buf %p len %zu", iface, buf, net_buf_frags_len(buf));
+	NET_DBG("iface %p pkt %p len %zu", iface, pkt, net_pkt_get_len(pkt));
 
-	if (!net_6lo_uncompress(buf)) {
+	if (!net_6lo_uncompress(pkt)) {
 		NET_DBG("Packet decompression failed");
 		return NET_DROP;
 	}
@@ -62,28 +62,28 @@ static enum net_verdict net_bt_recv(struct net_if *iface, struct net_buf *buf)
 	return NET_CONTINUE;
 }
 
-static enum net_verdict net_bt_send(struct net_if *iface, struct net_buf *buf)
+static enum net_verdict net_bt_send(struct net_if *iface, struct net_pkt *pkt)
 {
 	struct bt_context *ctxt = net_if_get_device(iface)->driver_data;
 
-	NET_DBG("iface %p buf %p len %zu", iface, buf, net_buf_frags_len(buf));
+	NET_DBG("iface %p pkt %p len %zu", iface, pkt, net_pkt_get_len(pkt));
 
 	/* Only accept IPv6 packets */
-	if (net_nbuf_family(buf) != AF_INET6) {
+	if (net_pkt_family(pkt) != AF_INET6) {
 		return NET_DROP;
 	}
 
-	if (!net_6lo_compress(buf, true, NULL)) {
+	if (!net_6lo_compress(pkt, true, NULL)) {
 		NET_DBG("Packet compression failed");
 		return NET_DROP;
 	}
 
-	net_if_queue_tx(ctxt->iface, buf);
+	net_if_queue_tx(ctxt->iface, pkt);
 
 	return NET_OK;
 }
 
-static inline uint16_t net_bt_reserve(struct net_if *iface, void *unused)
+static inline u16_t net_bt_reserve(struct net_if *iface, void *unused)
 {
 	ARG_UNUSED(iface);
 	ARG_UNUSED(unused);
@@ -173,32 +173,32 @@ static void ipsp_disconnected(struct bt_l2cap_chan *chan)
 static void ipsp_recv(struct bt_l2cap_chan *chan, struct net_buf *buf)
 {
 	struct bt_context *ctxt = CHAN_CTXT(chan);
-	struct net_buf *nbuf;
+	struct net_pkt *pkt;
 
 	NET_DBG("Incoming data channel %p len %zu", chan,
 		net_buf_frags_len(buf));
 
-	/* Get buffer for bearer / protocol related data */
-	nbuf = net_nbuf_get_reserve_rx(0, K_FOREVER);
+	/* Get packet for bearer / protocol related data */
+	pkt = net_pkt_get_reserve_rx(0, K_FOREVER);
 
 	/* Set destination address */
-	net_nbuf_ll_dst(nbuf)->addr = ctxt->src.val;
-	net_nbuf_ll_dst(nbuf)->len = sizeof(ctxt->src);
-	net_nbuf_ll_dst(nbuf)->type = NET_LINK_BLUETOOTH;
+	net_pkt_ll_dst(pkt)->addr = ctxt->src.val;
+	net_pkt_ll_dst(pkt)->len = sizeof(ctxt->src);
+	net_pkt_ll_dst(pkt)->type = NET_LINK_BLUETOOTH;
 
 	/* Set source address */
-	net_nbuf_ll_src(nbuf)->addr = ctxt->dst.val;
-	net_nbuf_ll_src(nbuf)->len = sizeof(ctxt->dst);
-	net_nbuf_ll_src(nbuf)->type = NET_LINK_BLUETOOTH;
+	net_pkt_ll_src(pkt)->addr = ctxt->dst.val;
+	net_pkt_ll_src(pkt)->len = sizeof(ctxt->dst);
+	net_pkt_ll_src(pkt)->type = NET_LINK_BLUETOOTH;
 
 	/* Add data buffer as fragment of RX buffer, take a reference while
 	 * doing so since L2CAP will unref the buffer after return.
 	 */
-	net_buf_frag_add(nbuf, net_nbuf_ref(buf));
+	net_pkt_frag_add(pkt, net_buf_ref(buf));
 
-	if (net_recv_data(ctxt->iface, nbuf) < 0) {
+	if (net_recv_data(ctxt->iface, pkt) < 0) {
 		NET_DBG("Packet dropped by NET stack");
-		net_nbuf_unref(nbuf);
+		net_pkt_unref(pkt);
 	}
 }
 
@@ -206,7 +206,7 @@ static struct net_buf *ipsp_alloc_buf(struct bt_l2cap_chan *chan)
 {
 	NET_DBG("Channel %p requires buffer", chan);
 
-	return net_nbuf_get_reserve_rx_data(0, K_FOREVER);
+	return net_pkt_get_reserve_rx_data(0, K_FOREVER);
 }
 
 static struct bt_l2cap_chan_ops ipsp_ops = {
@@ -222,14 +222,14 @@ static struct bt_context bt_context_data = {
 	.ipsp_chan.rx.mtu	= L2CAP_IPSP_MTU,
 };
 
-static int bt_iface_send(struct net_if *iface, struct net_buf *buf)
+static int bt_iface_send(struct net_if *iface, struct net_pkt *pkt)
 {
 	struct bt_context *ctxt = net_if_get_device(iface)->driver_data;
 	int ret;
 
-	NET_DBG("iface %p buf %p len %zu", iface, buf, net_buf_frags_len(buf));
+	NET_DBG("iface %p pkt %p len %zu", iface, pkt, net_pkt_get_len(pkt));
 
-	ret = bt_l2cap_chan_send(&ctxt->ipsp_chan.chan, buf);
+	ret = bt_l2cap_chan_send(&ctxt->ipsp_chan.chan, pkt->frags);
 	if (ret < 0) {
 		return ret;
 	}
@@ -280,7 +280,7 @@ static struct bt_l2cap_server server = {
 
 #if defined(CONFIG_NET_L2_BLUETOOTH_MGMT)
 
-static int bt_connect(uint32_t mgmt_request, struct net_if *iface, void *data,
+static int bt_connect(u32_t mgmt_request, struct net_if *iface, void *data,
 		      size_t len)
 {
 	struct bt_context *ctxt = net_if_get_device(iface)->driver_data;
@@ -307,7 +307,7 @@ static int bt_connect(uint32_t mgmt_request, struct net_if *iface, void *data,
 	return 0;
 }
 
-static bool eir_found(uint8_t type, const uint8_t *data, uint8_t data_len,
+static bool eir_found(u8_t type, const u8_t *data, u8_t data_len,
 		      void *user_data)
 {
 	int i;
@@ -319,13 +319,13 @@ static bool eir_found(uint8_t type, const uint8_t *data, uint8_t data_len,
 		return false;
 	}
 
-	if (data_len % sizeof(uint16_t) != 0) {
+	if (data_len % sizeof(u16_t) != 0) {
 		NET_ERR("AD malformed\n");
 		return false;
 	}
 
-	for (i = 0; i < data_len; i += sizeof(uint16_t)) {
-		uint16_t u16;
+	for (i = 0; i < data_len; i += sizeof(u16_t)) {
+		u16_t u16;
 
 		memcpy(&u16, &data[i], sizeof(u16));
 		if (sys_le16_to_cpu(u16) != BT_UUID_IPSS_VAL) {
@@ -348,13 +348,13 @@ static bool eir_found(uint8_t type, const uint8_t *data, uint8_t data_len,
 }
 
 static bool ad_parse(struct net_buf_simple *ad,
-		     bool (*func)(uint8_t type, const uint8_t *data,
-				  uint8_t data_len, void *user_data),
+		     bool (*func)(u8_t type, const u8_t *data,
+				  u8_t data_len, void *user_data),
 		     void *user_data)
 {
 	while (ad->len > 1) {
-		uint8_t len = net_buf_simple_pull_u8(ad);
-		uint8_t type;
+		u8_t len = net_buf_simple_pull_u8(ad);
+		u8_t type;
 
 		/* Check for early termination */
 		if (len == 0) {
@@ -378,7 +378,7 @@ static bool ad_parse(struct net_buf_simple *ad,
 	return false;
 }
 
-static void device_found(const bt_addr_le_t *addr, int8_t rssi, uint8_t type,
+static void device_found(const bt_addr_le_t *addr, s8_t rssi, u8_t type,
 			 struct net_buf_simple *ad)
 {
 	/* We're only interested in connectable events */
@@ -417,7 +417,7 @@ static void bt_scan_off(void)
 	}
 }
 
-static int bt_scan(uint32_t mgmt_request, struct net_if *iface, void *data,
+static int bt_scan(u32_t mgmt_request, struct net_if *iface, void *data,
 		   size_t len)
 {
 	if (!strcmp(data, "on") || !strcmp(data, "active")) {
@@ -433,7 +433,7 @@ static int bt_scan(uint32_t mgmt_request, struct net_if *iface, void *data,
 	return 0;
 }
 
-static int bt_disconnect(uint32_t mgmt_request, struct net_if *iface,
+static int bt_disconnect(u32_t mgmt_request, struct net_if *iface,
 			 void *data, size_t len)
 {
 	struct bt_context *ctxt = net_if_get_device(iface)->driver_data;
@@ -452,7 +452,7 @@ static int bt_disconnect(uint32_t mgmt_request, struct net_if *iface,
 	return bt_l2cap_chan_disconnect(&ctxt->ipsp_chan.chan);
 }
 
-static void connected(struct bt_conn *conn, uint8_t err)
+static void connected(struct bt_conn *conn, u8_t err)
 {
 	if (err) {
 #if defined(CONFIG_NET_DEBUG_L2_BLUETOOTH)
@@ -473,7 +473,7 @@ static void connected(struct bt_conn *conn, uint8_t err)
 			      L2CAP_IPSP_PSM);
 }
 
-static void disconnected(struct bt_conn *conn, uint8_t reason)
+static void disconnected(struct bt_conn *conn, u8_t reason)
 {
 #if defined(CONFIG_NET_DEBUG_L2_BLUETOOTH)
 	char addr[BT_ADDR_LE_STR_LEN];

@@ -65,6 +65,14 @@ FUNC_NORETURN void _NanoFatalErrorHandler(unsigned int reason,
 		printk("**** Kernel Allocation Failure! ****\n");
 		break;
 
+	case _NANO_ERR_KERNEL_OOPS:
+		printk("***** Kernel OOPS! *****\n");
+		break;
+
+	case _NANO_ERR_KERNEL_PANIC:
+		printk("***** Kernel Panic! *****\n");
+		break;
+
 	default:
 		printk("**** Unknown Fatal Error %u! ****\n", reason);
 		break;
@@ -78,16 +86,12 @@ FUNC_NORETURN void _NanoFatalErrorHandler(unsigned int reason,
 	 * registers, at the expense of some stack space.
 	 */
 	printk("Current thread ID: %p\n"
-	       "Faulting instruction: 0x%" PRIx32 "\n"
-	       "  r1: 0x%" PRIx32 "  r2: 0x%" PRIx32
-	       "  r3: 0x%" PRIx32 "  r4: 0x%" PRIx32 "\n"
-	       "  r5: 0x%" PRIx32 "  r6: 0x%" PRIx32
-	       "  r7: 0x%" PRIx32 "  r8: 0x%" PRIx32 "\n"
-	       "  r9: 0x%" PRIx32 " r10: 0x%" PRIx32
-	       " r11: 0x%" PRIx32 " r12: 0x%" PRIx32 "\n"
-	       " r13: 0x%" PRIx32 " r14: 0x%" PRIx32
-	       " r15: 0x%" PRIx32 "  ra: 0x%" PRIx32 "\n"
-	       "estatus: %" PRIx32 "\n", k_current_get(), esf->instr - 4,
+	       "Faulting instruction: 0x%x\n"
+	       "  r1: 0x%x  r2: 0x%x  r3: 0x%x  r4: 0x%x\n"
+	       "  r5: 0x%x  r6: 0x%x  r7: 0x%x  r8: 0x%x\n"
+	       "  r9: 0x%x r10: 0x%x r11: 0x%x r12: 0x%x\n"
+	       " r13: 0x%x r14: 0x%x r15: 0x%x  ra: 0x%x\n"
+	       "estatus: %x\n", k_current_get(), esf->instr - 4,
 	       esf->r1, esf->r2, esf->r3, esf->r4,
 	       esf->r5, esf->r6, esf->r7, esf->r8,
 	       esf->r9, esf->r10, esf->r11, esf->r12,
@@ -100,7 +104,7 @@ FUNC_NORETURN void _NanoFatalErrorHandler(unsigned int reason,
 
 #if defined(CONFIG_EXTRA_EXCEPTION_INFO) && defined(CONFIG_PRINTK) \
 	&& defined(ALT_CPU_HAS_EXTRA_EXCEPTION_INFO)
-static char *cause_str(uint32_t cause_code)
+static char *cause_str(u32_t cause_code)
 {
 	switch (cause_code) {
 	case 0:
@@ -164,7 +168,7 @@ FUNC_NORETURN void _Fault(const NANO_ESF *esf)
 #ifdef CONFIG_PRINTK
 	/* Unfortunately, completely unavailable on Nios II/e cores */
 #ifdef ALT_CPU_HAS_EXTRA_EXCEPTION_INFO
-	uint32_t exc_reg, badaddr_reg, eccftl;
+	u32_t exc_reg, badaddr_reg, eccftl;
 	enum nios2_exception_cause cause;
 
 	exc_reg = _nios2_creg_read(NIOS2_CR_EXCEPTION);
@@ -176,13 +180,13 @@ FUNC_NORETURN void _Fault(const NANO_ESF *esf)
 	cause = (exc_reg & NIOS2_EXCEPTION_REG_CAUSE_MASK)
 		 >> NIOS2_EXCEPTION_REG_CAUSE_OFST;
 
-	printk("Exception cause: %d ECCFTL: 0x%" PRIu32 "\n", cause, eccftl);
+	printk("Exception cause: %d ECCFTL: 0x%x\n", cause, eccftl);
 #if CONFIG_EXTRA_EXCEPTION_INFO
 	printk("reason: %s\n", cause_str(cause));
 #endif
 	if (BIT(cause) & NIOS2_BADADDR_CAUSE_MASK) {
 		badaddr_reg = _nios2_creg_read(NIOS2_CR_BADADDR);
-		printk("Badaddr: 0x%" PRIx32 "\n", badaddr_reg);
+		printk("Badaddr: 0x%x\n", badaddr_reg);
 	}
 #endif /* ALT_CPU_HAS_EXTRA_EXCEPTION_INFO */
 #endif /* CONFIG_PRINTK */
@@ -214,26 +218,30 @@ FUNC_NORETURN void _Fault(const NANO_ESF *esf)
 FUNC_NORETURN void _SysFatalErrorHandler(unsigned int reason,
 					 const NANO_ESF *pEsf)
 {
-	ARG_UNUSED(reason);
 	ARG_UNUSED(pEsf);
 
 #if !defined(CONFIG_SIMPLE_FATAL_ERROR_HANDLER)
+	if (reason == _NANO_ERR_KERNEL_PANIC) {
+		goto hang_system;
+	}
 	if (k_is_in_isr() || _is_thread_essential()) {
 		printk("Fatal fault in %s! Spinning...\n",
 		       k_is_in_isr() ? "ISR" : "essential thread");
-#ifdef ALT_CPU_HAS_DEBUG_STUB
-		_nios2_break();
-#endif
-		for (;;)
-			; /* spin forever */
+		goto hang_system;
 	}
 	printk("Fatal fault in thread %p! Aborting.\n", _current);
 	k_thread_abort(_current);
+
+hang_system:
 #else
+	ARG_UNUSED(reason);
+#endif
+
+#ifdef ALT_CPU_HAS_DEBUG_STUB
+	_nios2_break();
+#endif
 	for (;;) {
 		k_cpu_idle();
 	}
-#endif
-
 	CODE_UNREACHABLE;
 }

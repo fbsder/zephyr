@@ -11,7 +11,7 @@
 #include "config.h"
 
 #include <net/http_parser.h>
-#include <net/nbuf.h>
+#include <net/net_pkt.h>
 #include <stdio.h>
 
 #define URL_DEFAULT_HANDLER_INDEX 0
@@ -77,18 +77,18 @@ int parser_parse_request(struct http_server_ctx *ctx, struct net_buf *rx);
 
 static struct http_root_url *http_url_find(struct http_server_ctx *http_ctx);
 
-static int http_url_cmp(const char *url, uint16_t url_len,
-			const char *root_url, uint16_t root_url_len);
+static int http_url_cmp(const char *url, u16_t url_len,
+			const char *root_url, u16_t root_url_len);
 
 static void http_tx(struct http_server_ctx *http_ctx);
 
-void http_rx_tx(struct net_context *net_ctx, struct net_buf *rx, int status,
+void http_rx_tx(struct net_context *net_ctx, struct net_pkt *rx, int status,
 		void *user_data)
 {
 	struct http_server_ctx *http_ctx = NULL;
 	struct net_buf *data = NULL;
-	uint16_t rcv_len;
-	uint16_t offset;
+	u16_t rcv_len;
+	u16_t offset;
 	int parsed_len;
 	int rc;
 
@@ -116,7 +116,7 @@ void http_rx_tx(struct net_context *net_ctx, struct net_buf *rx, int status,
 		goto lb_exit;
 	}
 
-	rcv_len = net_nbuf_appdatalen(rx);
+	rcv_len = net_pkt_appdatalen(rx);
 	if (rcv_len == 0) {
 		/* don't print info about zero-length app data buffers */
 		goto lb_exit;
@@ -128,8 +128,8 @@ void http_rx_tx(struct net_context *net_ctx, struct net_buf *rx, int status,
 		goto lb_exit;
 	}
 
-	offset = net_buf_frags_len(rx) - rcv_len;
-	rc = net_nbuf_linear_copy(data, rx, offset, rcv_len);
+	offset = net_pkt_get_len(rx) - rcv_len;
+	rc = net_frag_linear_copy(data, rx->frags, offset, rcv_len);
 	if (rc != 0) {
 		printf("[%s:%d] Linear copy error\n", __func__, __LINE__);
 		goto lb_exit;
@@ -151,8 +151,8 @@ void http_rx_tx(struct net_context *net_ctx, struct net_buf *rx, int status,
 	}
 
 lb_exit:
-	net_buf_unref(data);
-	net_buf_unref(rx);
+	net_pkt_frag_unref(data);
+	net_pkt_unref(rx);
 
 	http_ctx_release(http_ctx);
 }
@@ -342,7 +342,7 @@ int http_url_default_handler(int (*write_cb)(struct http_server_ctx *))
 	return 0;
 }
 
-int http_url_add(const char *url, uint8_t flags,
+int http_url_add(const char *url, u8_t flags,
 		 int (*write_cb)(struct http_server_ctx *http_ctx))
 {
 	struct http_root_url *root = NULL;
@@ -364,8 +364,8 @@ int http_url_add(const char *url, uint8_t flags,
 	return 0;
 }
 
-static int http_url_cmp(const char *url, uint16_t url_len,
-			const char *root_url, uint16_t root_url_len)
+static int http_url_cmp(const char *url, u16_t url_len,
+			const char *root_url, u16_t root_url_len)
 {
 	if (url_len < root_url_len) {
 		return -EINVAL;
@@ -397,10 +397,10 @@ static int http_url_cmp(const char *url, uint16_t url_len,
 
 static struct http_root_url *http_url_find(struct http_server_ctx *http_ctx)
 {
-	uint16_t url_len = http_ctx->url_len;
+	u16_t url_len = http_ctx->url_len;
 	const char *url = http_ctx->url;
 	struct http_root_url *root_url;
-	uint8_t i;
+	u8_t i;
 	int rc;
 
 	/* at some point we must come up with something better */

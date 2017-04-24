@@ -28,23 +28,23 @@ struct ieee802154_radio_api {
 	int (*cca)(struct device *dev);
 
 	/** Set current channel */
-	int (*set_channel)(struct device *dev, uint16_t channel);
+	int (*set_channel)(struct device *dev, u16_t channel);
 
 	/** Set current PAN id */
-	int (*set_pan_id)(struct device *dev, uint16_t pan_id);
+	int (*set_pan_id)(struct device *dev, u16_t pan_id);
 
 	/** Set current device's short address */
-	int (*set_short_addr)(struct device *dev, uint16_t short_addr);
+	int (*set_short_addr)(struct device *dev, u16_t short_addr);
 
 	/** Set current devices's full length address */
-	int (*set_ieee_addr)(struct device *dev, const uint8_t *ieee_addr);
+	int (*set_ieee_addr)(struct device *dev, const u8_t *ieee_addr);
 
 	/** Set TX power level in dbm */
-	int (*set_txpower)(struct device *dev, int16_t dbm);
+	int (*set_txpower)(struct device *dev, s16_t dbm);
 
-	/** Transmit a buffer fragment */
+	/** Transmit a packet fragment */
 	int (*tx)(struct device *dev,
-		  struct net_buf *buf,
+		  struct net_pkt *pkt,
 		  struct net_buf *frag);
 
 	/** Start the device */
@@ -54,7 +54,7 @@ struct ieee802154_radio_api {
 	int (*stop)(struct device *dev);
 
 	/** Get latest Link Quality Information */
-	uint8_t (*get_lqi)(struct device *dev);
+	u8_t (*get_lqi)(struct device *dev);
 } __packed;
 
 /**
@@ -63,12 +63,12 @@ struct ieee802154_radio_api {
  * @details This function should be used to fill in struct net_if's send pointer.
  *
  * @param iface A valid pointer on a network interface to send from
- * @param buf A valid pointer on a buffer to send
+ * @param pkt A valid pointer on a packet to send
  *
  * @return 0 on success, negative value otherwise
  */
 extern int ieee802154_radio_send(struct net_if *iface,
-				 struct net_buf *buf);
+				 struct net_pkt *pkt);
 
 /**
  * @brief Radio driver ACK handling function that hw drivers should use
@@ -77,12 +77,12 @@ extern int ieee802154_radio_send(struct net_if *iface,
  *          helps to hook direcly the hw drivers to the radio driver.
  *
  * @param iface A valid pointer on a network interface that received the packet
- * @param buf A valid pointer on a buffer to check
+ * @param pkt A valid pointer on a packet to check
  *
  * @return NET_OK if it was handled, NET_CONTINUE otherwise
  */
 extern enum net_verdict ieee802154_radio_handle_ack(struct net_if *iface,
-						    struct net_buf *buf);
+						    struct net_pkt *pkt);
 
 /**
  * @brief Initialize L2 stack for a given interface

@@ -19,7 +19,7 @@
 #include <zephyr/types.h>
 #include <misc/slist.h>
 
-#include <net/nbuf.h>
+#include <net/net_pkt.h>
 #include <net/net_core.h>
 #include <net/net_stats.h>
 #include <net/net_mgmt.h>
@@ -134,7 +134,7 @@ struct net_nbr *net_route_get_nbr(struct net_route_entry *route)
 			continue;
 		}
 
-		if (nbr->data == (uint8_t *)route) {
+		if (nbr->data == (u8_t *)route) {
 			if (!nbr->ref) {
 				return NULL;
 			}
@@ -183,7 +183,7 @@ static inline void nbr_free(struct net_nbr *nbr)
 
 static struct net_nbr *nbr_new(struct net_if *iface,
 			       struct in6_addr *addr,
-			       uint8_t prefix_len)
+			       u8_t prefix_len)
 {
 	struct net_nbr *nbr = net_nbr_get(&net_nbr_routes.table);
 
@@ -264,7 +264,7 @@ struct net_route_entry *net_route_lookup(struct net_if *iface,
 					 struct in6_addr *dst)
 {
 	struct net_route_entry *route, *found = NULL;
-	uint8_t longest_match = 0;
+	u8_t longest_match = 0;
 	int i;
 
 	for (i = 0; i < CONFIG_NET_MAX_ROUTES && longest_match < 128; i++) {
@@ -281,8 +281,8 @@ struct net_route_entry *net_route_lookup(struct net_if *iface,
 		route = net_route_data(nbr);
 
 		if (route->prefix_len >= longest_match &&
-		    net_is_ipv6_prefix((uint8_t *)dst,
-				       (uint8_t *)&route->addr,
+		    net_is_ipv6_prefix((u8_t *)dst,
+				       (u8_t *)&route->addr,
 				       route->prefix_len)) {
 			found = route;
 			longest_match = route->prefix_len;
@@ -300,7 +300,7 @@ struct net_route_entry *net_route_lookup(struct net_if *iface,
 
 struct net_route_entry *net_route_add(struct net_if *iface,
 				      struct in6_addr *addr,
-				      uint8_t prefix_len,
+				      u8_t prefix_len,
 				      struct in6_addr *nexthop)
 {
 	struct net_linkaddr_storage *nexthop_lladdr;
@@ -716,12 +716,12 @@ bool net_route_get_info(struct net_if *iface,
 	return false;
 }
 
-int net_route_packet(struct net_buf *buf, struct in6_addr *nexthop)
+int net_route_packet(struct net_pkt *pkt, struct in6_addr *nexthop)
 {
 	struct net_linkaddr_storage *lladdr;
 	struct net_nbr *nbr;
 
-	nbr = net_ipv6_nbr_lookup(net_nbuf_iface(buf), nexthop);
+	nbr = net_ipv6_nbr_lookup(net_pkt_iface(pkt), nexthop);
 	if (!nbr) {
 		NET_DBG("Cannot find %s neighbor.",
 			net_sprint_ipv6_addr(nexthop));
@@ -738,25 +738,25 @@ int net_route_packet(struct net_buf *buf, struct in6_addr *nexthop)
 	/* Sanitycheck: If src and dst ll addresses are going to be same,
 	 * then something went wrong in route lookup.
 	 */
-	if (!memcmp(net_nbuf_ll_src(buf)->addr, lladdr->addr, lladdr->len)) {
+	if (!memcmp(net_pkt_ll_src(pkt)->addr, lladdr->addr, lladdr->len)) {
 		NET_ERR("Src ll and Dst ll are same");
 		return -EINVAL;
 	}
 
-	net_nbuf_set_forwarding(buf, true);
+	net_pkt_set_forwarding(pkt, true);
 
 	/* Set the destination and source ll address in the packet.
 	 * We set the destination address to be the nexthop recipient.
 	 */
-	net_nbuf_ll_src(buf)->addr = net_nbuf_ll_if(buf)->addr;
-	net_nbuf_ll_src(buf)->type = net_nbuf_ll_if(buf)->type;
-	net_nbuf_ll_src(buf)->len = net_nbuf_ll_if(buf)->len;
+	net_pkt_ll_src(pkt)->addr = net_pkt_ll_if(pkt)->addr;
+	net_pkt_ll_src(pkt)->type = net_pkt_ll_if(pkt)->type;
+	net_pkt_ll_src(pkt)->len = net_pkt_ll_if(pkt)->len;
 
-	net_nbuf_ll_dst(buf)->addr = lladdr->addr;
-	net_nbuf_ll_dst(buf)->type = lladdr->type;
-	net_nbuf_ll_dst(buf)->len = lladdr->len;
+	net_pkt_ll_dst(pkt)->addr = lladdr->addr;
+	net_pkt_ll_dst(pkt)->type = lladdr->type;
+	net_pkt_ll_dst(pkt)->len = lladdr->len;
 
-	return net_send_data(buf);
+	return net_send_data(pkt);
 }
 
 void net_route_init(void)

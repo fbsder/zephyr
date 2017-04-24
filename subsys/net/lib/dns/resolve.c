@@ -21,7 +21,7 @@
 #include <stdlib.h>
 
 #include <net/net_ip.h>
-#include <net/nbuf.h>
+#include <net/net_pkt.h>
 #include <net/dns_resolve.h>
 #include "dns_pack.h"
 
@@ -88,7 +88,7 @@ int dns_resolve_init(struct dns_resolve_context *ctx, const char *servers[])
 	struct sockaddr *local_addr = NULL;
 	socklen_t addr_len = 0;
 	int i = 0, idx = 0;
-	uint16_t port = 0;
+	u16_t port = 0;
 	int ret, count;
 
 	if (!ctx) {
@@ -344,7 +344,7 @@ static inline int get_cb_slot(struct dns_resolve_context *ctx)
 }
 
 static inline int get_slot_by_id(struct dns_resolve_context *ctx,
-				 uint16_t dns_id)
+				 u16_t dns_id)
 {
 	int i;
 
@@ -358,16 +358,16 @@ static inline int get_slot_by_id(struct dns_resolve_context *ctx,
 }
 
 static int dns_read(struct dns_resolve_context *ctx,
-		    struct net_buf *buf,
+		    struct net_pkt *pkt,
 		    struct net_buf *dns_data,
-		    uint16_t *dns_id,
+		    u16_t *dns_id,
 		    struct net_buf *dns_cname,
 		    struct dns_addrinfo *info)
 {
 	/* Helper struct to track the dns msg received from the server */
 	struct dns_msg_t dns_msg;
-	uint32_t ttl; /* RR ttl, so far it is not passed to caller */
-	uint8_t *src, *addr;
+	u32_t ttl; /* RR ttl, so far it is not passed to caller */
+	u8_t *src, *addr;
 	int address_size;
 	/* index that points to the current answer being analyzed */
 	int answer_ptr;
@@ -377,12 +377,12 @@ static int dns_read(struct dns_resolve_context *ctx,
 	int ret;
 	int server_idx, query_idx;
 
-	data_len = min(net_nbuf_appdatalen(buf), DNS_RESOLVER_MAX_BUF_SIZE);
-	offset = net_buf_frags_len(buf) - data_len;
+	data_len = min(net_pkt_appdatalen(pkt), DNS_RESOLVER_MAX_BUF_SIZE);
+	offset = net_pkt_get_len(pkt) - data_len;
 
-	/* TODO: Instead of this temporary copy, just use the net_buf directly.
+	/* TODO: Instead of this temporary copy, just use the net_pkt directly.
 	 */
-	ret = net_nbuf_linear_copy(dns_data, buf, offset, data_len);
+	ret = net_frag_linear_copy(dns_data, pkt->frags, offset, data_len);
 	if (ret < 0) {
 		ret = DNS_EAI_MEMORY;
 		goto quit;
@@ -429,13 +429,13 @@ static int dns_read(struct dns_resolve_context *ctx,
 
 	if (ctx->queries[query_idx].query_type == DNS_QUERY_TYPE_A) {
 		address_size = DNS_IPV4_LEN;
-		addr = (uint8_t *)&net_sin(&info->ai_addr)->sin_addr;
+		addr = (u8_t *)&net_sin(&info->ai_addr)->sin_addr;
 		info->ai_family = AF_INET;
 		info->ai_addr.family = AF_INET;
 		info->ai_addrlen = sizeof(struct sockaddr_in);
 	} else if (ctx->queries[query_idx].query_type == DNS_QUERY_TYPE_AAAA) {
 		address_size = DNS_IPV6_LEN;
-		addr = (uint8_t *)&net_sin6(&info->ai_addr)->sin6_addr;
+		addr = (u8_t *)&net_sin6(&info->ai_addr)->sin6_addr;
 		info->ai_family = AF_INET6;
 		info->ai_addr.family = AF_INET6;
 		info->ai_addrlen = sizeof(struct sockaddr_in6);
@@ -496,7 +496,7 @@ static int dns_read(struct dns_resolve_context *ctx,
 	 */
 	if (items == 0) {
 		if (dns_msg.response_type == DNS_RESPONSE_CNAME_NO_IP) {
-			uint16_t pos = dns_msg.response_position;
+			u16_t pos = dns_msg.response_position;
 
 			ret = dns_copy_qname(dns_cname->data, &dns_cname->len,
 					     dns_cname->size, &dns_msg, pos);
@@ -526,7 +526,7 @@ static int dns_read(struct dns_resolve_context *ctx,
 
 	ctx->queries[query_idx].cb = NULL;
 
-	net_nbuf_unref(buf);
+	net_pkt_unref(pkt);
 
 	return 0;
 
@@ -534,13 +534,13 @@ finished:
 	dns_resolve_cancel(ctx, *dns_id);
 
 quit:
-	net_nbuf_unref(buf);
+	net_pkt_unref(pkt);
 
 	return ret;
 }
 
 static void cb_recv(struct net_context *net_ctx,
-		    struct net_buf *buf,
+		    struct net_pkt *pkt,
 		    int status,
 		    void *user_data)
 {
@@ -548,7 +548,7 @@ static void cb_recv(struct net_context *net_ctx,
 	struct dns_addrinfo info = { 0 };
 	struct net_buf *dns_cname = NULL;
 	struct net_buf *dns_data = NULL;
-	uint16_t dns_id = 0;
+	u16_t dns_id = 0;
 	int ret, i;
 
 	ARG_UNUSED(net_ctx);
@@ -570,7 +570,7 @@ static void cb_recv(struct net_context *net_ctx,
 		goto quit;
 	}
 
-	ret = dns_read(ctx, buf, dns_data, &dns_id, dns_cname, &info);
+	ret = dns_read(ctx, pkt, dns_data, &dns_id, dns_cname, &info);
 	if (!ret) {
 		/* We called the callback already in dns_read() if there
 		 * was no errors.
@@ -643,9 +643,9 @@ static int dns_write(struct dns_resolve_context *ctx,
 	enum dns_query_type query_type;
 	struct net_context *net_ctx;
 	struct sockaddr *server;
-	struct net_buf *buf;
+	struct net_pkt *pkt;
 	int server_addr_len;
-	uint16_t dns_id;
+	u16_t dns_id;
 	int ret;
 
 	net_ctx = ctx->servers[server_idx].net_ctx;
@@ -661,13 +661,13 @@ static int dns_write(struct dns_resolve_context *ctx,
 		goto quit;
 	}
 
-	buf = net_nbuf_get_tx(net_ctx, ctx->buf_timeout);
-	if (!buf) {
+	pkt = net_pkt_get_tx(net_ctx, ctx->buf_timeout);
+	if (!pkt) {
 		ret = -ENOMEM;
 		goto quit;
 	}
 
-	ret = net_nbuf_append(buf, dns_data->len, dns_data->data,
+	ret = net_pkt_append(pkt, dns_data->len, dns_data->data,
 			      ctx->buf_timeout);
 	if (ret < 0) {
 		ret = -ENOMEM;
@@ -682,11 +682,11 @@ static int dns_write(struct dns_resolve_context *ctx,
 
 	net_context_recv(net_ctx, cb_recv, K_NO_WAIT, ctx);
 
-	ret = net_context_sendto(buf, server, server_addr_len, NULL,
+	ret = net_context_sendto(pkt, server, server_addr_len, NULL,
 				 K_NO_WAIT, NULL, NULL);
 	if (ret < 0) {
 		NET_DBG("Cannot send query (%d)", ret);
-		net_nbuf_unref(buf);
+		net_pkt_unref(pkt);
 		goto quit;
 	}
 
@@ -711,7 +711,7 @@ quit:
 	return ret;
 }
 
-int dns_resolve_cancel(struct dns_resolve_context *ctx, uint16_t dns_id)
+int dns_resolve_cancel(struct dns_resolve_context *ctx, u16_t dns_id)
 {
 	int i;
 
@@ -745,10 +745,10 @@ static void query_timeout(struct k_work *work)
 int dns_resolve_name(struct dns_resolve_context *ctx,
 		     const char *query,
 		     enum dns_query_type type,
-		     uint16_t *dns_id,
+		     u16_t *dns_id,
 		     dns_resolve_cb_t cb,
 		     void *user_data,
-		     int32_t timeout)
+		     s32_t timeout)
 {
 	struct net_buf *dns_data;
 	struct net_buf *dns_qname = NULL;

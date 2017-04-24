@@ -14,7 +14,7 @@
 #include <drivers/rand32.h>
 #include <errno.h>
 #include <gpio.h>
-#include <net/nbuf.h>
+#include <net/net_pkt.h>
 #include <net/net_context.h>
 #include <net/net_core.h>
 #include <net/net_if.h>
@@ -29,10 +29,10 @@
 #endif
 
 #define STACK_SIZE	2048
-uint8_t stack[STACK_SIZE];
+u8_t stack[STACK_SIZE];
 
 #define CMD_BUFFER_SIZE 256
-static uint8_t cmd_buf[CMD_BUFFER_SIZE];
+static u8_t cmd_buf[CMD_BUFFER_SIZE];
 
 /* LED */
 #if defined(LED0_GPIO_PORT)
@@ -138,18 +138,18 @@ panic(const char *msg)
 static int
 transmit(struct net_context *ctx, char buffer[], size_t len)
 {
-	struct net_buf *send_buf;
+	struct net_pkt *send_pkt;
 
-	send_buf = net_nbuf_get_tx(ctx, K_FOREVER);
-	if (!send_buf) {
+	send_pkt = net_pkt_get_tx(ctx, K_FOREVER);
+	if (!send_pkt) {
 		return -ENOMEM;
 	}
 
-	if (!net_nbuf_append(send_buf, len, buffer, K_FOREVER)) {
+	if (!net_pkt_append(send_pkt, len, buffer, K_FOREVER)) {
 		return -EINVAL;
 	}
 
-	return net_context_send(send_buf, NULL, K_NO_WAIT, NULL, NULL);
+	return net_context_send(send_pkt, NULL, K_NO_WAIT, NULL, NULL);
 }
 
 static void
@@ -271,16 +271,16 @@ process_command(struct zirc *irc, char *cmd, size_t len)
 #undef CMD
 
 static void
-on_context_recv(struct net_context *ctx, struct net_buf *buf,
+on_context_recv(struct net_context *ctx, struct net_pkt *pkt,
 				int status, void *data)
 {
 	struct zirc *irc = data;
 	struct net_buf *tmp;
-	uint8_t *end_of_line;
+	u8_t *end_of_line;
 	size_t len;
-	uint16_t pos = 0, cmd_len = 0;
+	u16_t pos = 0, cmd_len = 0;
 
-	if (!buf) {
+	if (!pkt) {
 		/* TODO: notify of disconnection, maybe reconnect? */
 		NET_ERR("Disconnected\n");
 		return;
@@ -289,14 +289,14 @@ on_context_recv(struct net_context *ctx, struct net_buf *buf,
 	if (status) {
 		/* TODO: handle connection error */
 		NET_ERR("Connection error: %d\n", -status);
-		net_nbuf_unref(buf);
+		net_pkt_unref(pkt);
 		return;
 	}
 
 	/* tmp points to fragment containing IP header */
-	tmp = buf->frags;
+	tmp = pkt->frags;
 	/* skip pos to the first TCP payload */
-	pos = net_nbuf_appdata(buf) - tmp->data;
+	pos = net_pkt_appdata(pkt) - tmp->data;
 
 	while (tmp) {
 		len = tmp->len - pos;
@@ -314,13 +314,13 @@ on_context_recv(struct net_context *ctx, struct net_buf *buf,
 			break;
 		}
 
-		tmp = net_nbuf_read(tmp, pos, &pos, len, cmd_buf + cmd_len);
+		tmp = net_frag_read(tmp, pos, &pos, len, cmd_buf + cmd_len);
 		cmd_len += len;
 
 		if (end_of_line) {
 			/* skip the /n char after /r */
 			if (tmp) {
-				tmp = net_nbuf_read(tmp, pos, &pos, 1, NULL);
+				tmp = net_frag_read(tmp, pos, &pos, 1, NULL);
 			}
 
 			cmd_buf[cmd_len] = '\0';
@@ -329,7 +329,7 @@ on_context_recv(struct net_context *ctx, struct net_buf *buf,
 		}
 	}
 
-	net_nbuf_unref(buf);
+	net_pkt_unref(pkt);
 
 	/* TODO: handle messages that spans multiple packets? */
 }
@@ -678,7 +678,7 @@ static void
 on_cmd_random(struct zirc_chan *chan, const char *nick, const char *msg)
 {
 	char buf[128];
-	int32_t num = sys_rand32_get();
+	s32_t num = sys_rand32_get();
 	int ret;
 
 	switch (num & 3) {
@@ -714,7 +714,7 @@ on_cmd_random(struct zirc_chan *chan, const char *nick, const char *msg)
 static bool
 read_led(void)
 {
-	uint32_t led = 0;
+	u32_t led = 0;
 	int r;
 
 	if (!led0) {
@@ -851,7 +851,7 @@ static struct net_mgmt_event_callback mgmt4_cb;
 static struct k_sem dhcpv4_ok = K_SEM_INITIALIZER(dhcpv4_ok, 0, UINT_MAX);
 
 static void ipv4_addr_add_handler(struct net_mgmt_event_callback *cb,
-				  uint32_t mgmt_event,
+				  u32_t mgmt_event,
 				  struct net_if *iface)
 {
 	char hr_addr[NET_IPV4_ADDR_LEN];
@@ -948,7 +948,7 @@ static struct k_sem dad_ok = K_SEM_INITIALIZER(dad_ok, 0, UINT_MAX);
 static struct in6_addr laddr;
 
 static void ipv6_dad_ok_handler(struct net_mgmt_event_callback *cb,
-				uint32_t mgmt_event,
+				u32_t mgmt_event,
 				struct net_if *iface)
 {
 	struct net_if_addr *ifaddr;

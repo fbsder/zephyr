@@ -10,25 +10,6 @@
 #include <wait_q.h>
 #include <string.h>
 
-#if defined(CONFIG_THREAD_MONITOR)
-/*
- * Add a thread to the kernel's list of active threads.
- */
-static ALWAYS_INLINE void thread_monitor_init(struct k_thread *thread)
-{
-	unsigned int key;
-
-	key = irq_lock();
-	thread->next_thread = _kernel.threads;
-	_kernel.threads = thread;
-	irq_unlock(key);
-}
-#else
-#define thread_monitor_init(thread)		\
-	do {/* do nothing */			\
-	} while ((0))
-#endif /* CONFIG_THREAD_MONITOR */
-
 void _thread_entry_wrapper(_thread_entry_t thread,
 			   void *arg1,
 			   void *arg2,
@@ -37,26 +18,25 @@ void _thread_entry_wrapper(_thread_entry_t thread,
 void _new_thread(char *stack_memory, size_t stack_size,
 		 _thread_entry_t thread_func,
 		 void *arg1, void *arg2, void *arg3,
-		 int priority, unsigned options)
+		 int priority, unsigned int options)
 {
 	_ASSERT_VALID_PRIO(priority, thread_func);
 
 	struct k_thread *thread;
 	struct __esf *stack_init;
 
-#ifdef CONFIG_INIT_STACKS
-	memset(stack_memory, 0xaa, stack_size);
-#endif
+	thread = _new_thread_init(stack_memory, stack_size, priority, options);
+
 	/* Initial stack frame for thread */
 	stack_init = (struct __esf *)
 		STACK_ROUND_DOWN(stack_memory +
 				 stack_size - sizeof(struct __esf));
 
 	/* Setup the initial stack frame */
-	stack_init->a0 = (uint32_t)thread_func;
-	stack_init->a1 = (uint32_t)arg1;
-	stack_init->a2 = (uint32_t)arg2;
-	stack_init->a3 = (uint32_t)arg3;
+	stack_init->a0 = (u32_t)thread_func;
+	stack_init->a1 = (u32_t)arg1;
+	stack_init->a2 = (u32_t)arg2;
+	stack_init->a3 = (u32_t)arg3;
 	/*
 	 * Following the RISC-V architecture,
 	 * the MSTATUS register (used to globally enable/disable interrupt),
@@ -81,23 +61,9 @@ void _new_thread(char *stack_memory, size_t stack_size,
 	 *    thread stack.
 	 */
 	stack_init->mstatus = SOC_MSTATUS_DEF_RESTORE;
-	stack_init->mepc = (uint32_t)_thread_entry_wrapper;
+	stack_init->mepc = (u32_t)_thread_entry_wrapper;
 
-	/* Initialize various struct k_thread members */
-	thread = (struct k_thread *)stack_memory;
-
-	_init_thread_base(&thread->base, priority, _THREAD_PRESTART, options);
-
-	/* static threads overwrite it afterwards with real value */
-	thread->init_data = NULL;
-	thread->fn_abort = NULL;
-
-#ifdef CONFIG_THREAD_CUSTOM_DATA
-	/* Initialize custom data field (value is opaque to kernel) */
-	thread->custom_data = NULL;
-#endif
-
-	thread->callee_saved.sp = (uint32_t)stack_init;
+	thread->callee_saved.sp = (u32_t)stack_init;
 
 	thread_monitor_init(thread);
 }

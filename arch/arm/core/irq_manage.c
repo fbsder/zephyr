@@ -82,7 +82,7 @@ int _arch_irq_is_enabled(unsigned int irq)
  *
  * @return N/A
  */
-void _irq_priority_set(unsigned int irq, unsigned int prio, uint32_t flags)
+void _irq_priority_set(unsigned int irq, unsigned int prio, u32_t flags)
 {
 	/* Hardware priority levels 0 and 1 reserved for Kernel use.
 	 * So we add 2 to the requested priority level. If we support
@@ -162,7 +162,7 @@ void _arch_isr_direct_pm(void)
 #endif /* CONFIG_ARMV6_M */
 
 	if (_kernel.idle) {
-		int32_t idle_val = _kernel.idle;
+		s32_t idle_val = _kernel.idle;
 
 		_kernel.idle = 0;
 		_sys_power_save_idle_exit(idle_val);

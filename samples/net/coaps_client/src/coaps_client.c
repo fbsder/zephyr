@@ -32,7 +32,7 @@
 #include <net/net_context.h>
 #include <net/net_if.h>
 #include <net/buf.h>
-#include <net/nbuf.h>
+#include <net/net_pkt.h>
 #include "udp.h"
 #include "udp_cfg.h"
 
@@ -70,7 +70,7 @@ struct zoap_reply replies[NUM_REPLIES];
 
 #define ZOAP_BUF_SIZE 128
 
-NET_BUF_POOL_DEFINE(zoap_nbuf_pool, 4, 0, sizeof(struct net_nbuf), NULL);
+NET_PKT_TX_SLAB_DEFINE(zoap_pkt_slab, 4);
 NET_BUF_POOL_DEFINE(zoap_data_pool, 4, ZOAP_BUF_SIZE, 0, NULL);
 
 static const char *const test_path[] = { "test", NULL };
@@ -78,12 +78,12 @@ static const char *const test_path[] = { "test", NULL };
 static struct in6_addr mcast_addr = MCAST_IP_ADDR;
 
 struct dtls_timing_context {
-	uint32_t snapshot;
-	uint32_t int_ms;
-	uint32_t fin_ms;
+	u32_t snapshot;
+	u32_t int_ms;
+	u32_t fin_ms;
 };
 
-static void msg_dump(const char *s, uint8_t *data, unsigned int len)
+static void msg_dump(const char *s, u8_t *data, unsigned int len)
 {
 	unsigned int i;
 
@@ -100,7 +100,7 @@ static int resource_reply_cb(const struct zoap_packet *response,
 			     const struct sockaddr *from)
 {
 
-	struct net_buf *frag = response->buf->frags;
+	struct net_buf *frag = response->pkt->frags;
 
 	while (frag) {
 		msg_dump("reply", frag->data, frag->len);
@@ -125,7 +125,7 @@ static void my_debug(void *ctx, int level,
 	mbedtls_printf("%s:%04d: |%d| %s", basename, line, level, str);
 }
 
-void dtls_timing_set_delay(void *data, uint32_t int_ms, uint32_t fin_ms)
+void dtls_timing_set_delay(void *data, u32_t int_ms, u32_t fin_ms)
 {
 	struct dtls_timing_context *ctx = (struct dtls_timing_context *)data;
 
@@ -162,7 +162,7 @@ int dtls_timing_get_delay(void *data)
 static int entropy_source(void *data, unsigned char *output, size_t len,
 			  size_t *olen)
 {
-	uint32_t seed;
+	u32_t seed;
 
 	ARG_UNUSED(data);
 
@@ -184,12 +184,13 @@ void dtls_client(void)
 	int ret;
 	struct udp_context ctx;
 	struct dtls_timing_context timer;
-	struct zoap_packet request, pkt;
+	struct zoap_packet request, zkt;
 	struct zoap_reply *reply;
-	struct net_buf *nbuf, *frag;
-	uint8_t observe = 0;
+	struct net_pkt *pkt;
+	struct net_buf *frag;
+	u8_t observe = 0;
 	const char *const *p;
-	uint16_t len;
+	u16_t len;
 
 	mbedtls_entropy_context entropy;
 	mbedtls_ctr_drbg_context ctr_drbg;
@@ -281,8 +282,8 @@ void dtls_client(void)
 
 	/* Write to server */
 retry:
-	nbuf = net_buf_alloc(&zoap_nbuf_pool, K_NO_WAIT);
-	if (!nbuf) {
+	pkt = net_pkt_get_reserve(&zoap_pkt_slab, 0, K_NO_WAIT);
+	if (!pkt) {
 		goto exit;
 	}
 
@@ -291,9 +292,9 @@ retry:
 		goto exit;
 	}
 
-	net_buf_frag_add(nbuf, frag);
+	net_pkt_frag_add(pkt, frag);
 
-	ret = zoap_packet_init(&request, nbuf);
+	ret = zoap_packet_init(&request, pkt);
 	if (ret < 0) {
 		goto exit;
 	}
@@ -336,7 +337,7 @@ retry:
 	} while (ret == MBEDTLS_ERR_SSL_WANT_READ ||
 		 ret == MBEDTLS_ERR_SSL_WANT_WRITE);
 
-	net_buf_unref(nbuf);
+	net_pkt_unref(pkt);
 
 	if (ret <= 0) {
 		mbedtls_printf("mbedtls_ssl_write failed returned 0x%x\n",
@@ -344,9 +345,9 @@ retry:
 		goto exit;
 	}
 
-	nbuf = net_buf_alloc(&zoap_nbuf_pool, K_NO_WAIT);
-	if (!nbuf) {
-		mbedtls_printf("Could not get buffer from pool\n");
+	pkt = net_pkt_get_reserve(&zoap_pkt_slab, 0, K_NO_WAIT);
+	if (!pkt) {
+		mbedtls_printf("Could not get packet from pool\n");
 		goto exit;
 	}
 
@@ -356,7 +357,7 @@ retry:
 		goto exit;
 	}
 
-	net_buf_frag_add(nbuf, frag);
+	net_pkt_frag_add(pkt, frag);
 	len = ZOAP_BUF_SIZE - 1;
 	memset(frag->data, 0, ZOAP_BUF_SIZE);
 
@@ -366,7 +367,7 @@ retry:
 		 ret == MBEDTLS_ERR_SSL_WANT_WRITE);
 
 	if (ret <= 0) {
-		net_buf_unref(nbuf);
+		net_pkt_unref(pkt);
 
 		switch (ret) {
 		case MBEDTLS_ERR_SSL_TIMEOUT:
@@ -388,18 +389,18 @@ retry:
 	len = ret;
 	frag->len = len;
 
-	ret = zoap_packet_parse(&pkt, nbuf);
+	ret = zoap_packet_parse(&zpkt, pkt);
 	if (ret) {
 		mbedtls_printf("Could not parse packet\n");
 		goto exit;
 	}
 
-	reply = zoap_response_received(&pkt, NULL, replies, NUM_REPLIES);
+	reply = zoap_response_received(&zpkt, NULL, replies, NUM_REPLIES);
 	if (!reply) {
 		mbedtls_printf("No handler for response (%d)\n", ret);
 	}
 
-	net_buf_unref(nbuf);
+	net_pkt_unref(pkt);
 	mbedtls_ssl_close_notify(&ssl);
 exit:
 
@@ -410,7 +411,7 @@ exit:
 }
 
 #define STACK_SIZE		4096
-uint8_t stack[STACK_SIZE];
+u8_t stack[STACK_SIZE];
 
 static inline int init_app(void)
 {

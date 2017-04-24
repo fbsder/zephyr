@@ -26,7 +26,7 @@
 
 #include <console/console.h>
 #include <net/buf.h>
-#include <net/nbuf.h>
+#include <net/net_pkt.h>
 #include <net/net_ip.h>
 #include <net/net_context.h>
 
@@ -55,13 +55,13 @@
  */
 struct line_buf {
 	char buf[TELNET_LINE_SIZE];
-	uint16_t len;
+	u16_t len;
 };
 
 struct line_buf_rb {
 	struct line_buf l_bufs[TELNET_LINES];
-	uint16_t line_in;
-	uint16_t line_out;
+	u16_t line_in;
+	u16_t line_out;
 };
 
 static struct line_buf_rb telnet_rb;
@@ -80,7 +80,7 @@ static K_TIMER_DEFINE(send_timer, telnet_send_prematurely, NULL);
 
 /* For now we handle a unique telnet client connection */
 static struct net_context *client_cnx;
-static struct net_buf *out_buf;
+static struct net_pkt *out_pkt;
 static int (*orig_printk_hook)(int);
 
 static struct k_fifo *avail_queue;
@@ -116,18 +116,18 @@ static void telnet_end_client_connection(void)
 	net_context_put(client_cnx);
 	client_cnx = NULL;
 
-	if (out_buf) {
-		net_buf_unref(out_buf);
+	if (out_pkt) {
+		net_pkt_unref(out_pkt);
 	}
 
 	telnet_rb_init();
 }
 
-static int telnet_setup_out_buf(struct net_context *client)
+static int telnet_setup_out_pkt(struct net_context *client)
 {
-	out_buf = net_nbuf_get_tx(client, K_FOREVER);
-	if (!out_buf) {
-		/* Cannot happen atm, nbuf waits indefinitely */
+	out_pkt = net_pkt_get_tx(client, K_FOREVER);
+	if (!out_pkt) {
+		/* Cannot happen atm, net_pkt waits indefinitely */
 		return -ENOBUFS;
 	}
 
@@ -160,7 +160,7 @@ static void telnet_rb_switch(void)
 
 static inline struct line_buf *telnet_rb_get_line_out(void)
 {
-	uint16_t out = telnet_rb.line_out;
+	u16_t out = telnet_rb.line_out;
 
 	telnet_rb.line_out++;
 	if (telnet_rb.line_out == TELNET_LINES) {
@@ -225,7 +225,7 @@ static void telnet_sent_cb(struct net_context *client,
 {
 	if (status) {
 		telnet_end_client_connection();
-		SYS_LOG_ERR("Could not sent last buffer");
+		SYS_LOG_ERR("Could not sent last packet");
 	}
 }
 
@@ -234,14 +234,14 @@ static inline bool telnet_send(void)
 	struct line_buf *lb = telnet_rb_get_line_out();
 
 	if (lb) {
-		net_nbuf_append(out_buf, lb->len, lb->buf, K_FOREVER);
+		net_pkt_append(out_pkt, lb->len, lb->buf, K_FOREVER);
 
 		/* We reinitialize the line buffer */
 		lb->len = 0;
 
-		if (net_context_send(out_buf, telnet_sent_cb,
+		if (net_context_send(out_pkt, telnet_sent_cb,
 				     K_NO_WAIT, NULL, NULL) ||
-		    telnet_setup_out_buf(client_cnx)) {
+		    telnet_setup_out_pkt(client_cnx)) {
 			return false;
 		}
 	}
@@ -256,21 +256,21 @@ static int telnet_console_out_nothing(int c)
 	return c;
 }
 
-static inline void telnet_command_send_reply(uint8_t *msg, uint16_t len)
+static inline void telnet_command_send_reply(u8_t *msg, u16_t len)
 {
-	net_nbuf_append(out_buf, len, msg, K_FOREVER);
+	net_pkt_append(out_pkt, len, msg, K_FOREVER);
 
-	net_context_send(out_buf, telnet_sent_cb,
+	net_context_send(out_pkt, telnet_sent_cb,
 			 K_NO_WAIT, NULL, NULL);
 
-	telnet_setup_out_buf(client_cnx);
+	telnet_setup_out_pkt(client_cnx);
 }
 
 static inline void telnet_reply_ay_command(void)
 {
 	static const char alive[24] = "Zephyr at your service\r\n";
 
-	telnet_command_send_reply((uint8_t *)alive, 24);
+	telnet_command_send_reply((u8_t *)alive, 24);
 }
 
 static inline void telnet_reply_do_command(void)
@@ -284,7 +284,7 @@ static inline void telnet_reply_do_command(void)
 		break;
 	}
 
-	telnet_command_send_reply((uint8_t *)&telnet_cmd,
+	telnet_command_send_reply((u8_t *)&telnet_cmd,
 				  sizeof(struct telnet_simple_command));
 }
 
@@ -326,10 +326,10 @@ out:
 #define telnet_reply_command()
 #endif /* CONFIG_TELNET_CONSOLE_SUPPORT_COMMAND */
 
-static inline bool telnet_handle_command(struct net_buf *buf)
+static inline bool telnet_handle_command(struct net_pkt *pkt)
 {
 	struct telnet_simple_command *cmd =
-		(struct telnet_simple_command *)net_nbuf_appdata(buf);
+		(struct telnet_simple_command *)net_pkt_appdata(pkt);
 
 	if (cmd->iac != NVT_CMD_IAC) {
 		return false;
@@ -351,17 +351,17 @@ static inline bool telnet_handle_command(struct net_buf *buf)
 	return true;
 }
 
-static inline void telnet_handle_input(struct net_buf *buf)
+static inline void telnet_handle_input(struct net_pkt *pkt)
 {
 	struct console_input *input;
-	uint16_t len, offset, pos;
+	u16_t len, offset, pos;
 
-	len = net_nbuf_appdatalen(buf);
+	len = net_pkt_appdatalen(pkt);
 	if (len > CONSOLE_MAX_LINE_LEN || len < TELNET_MIN_MSG) {
 		return;
 	}
 
-	if (telnet_handle_command(buf)) {
+	if (telnet_handle_command(pkt)) {
 		return;
 	}
 
@@ -374,8 +374,8 @@ static inline void telnet_handle_input(struct net_buf *buf)
 		return;
 	}
 
-	offset = net_buf_frags_len(buf) - len;
-	net_nbuf_read(buf->frags, offset, &pos, len, input->line);
+	offset = net_pkt_get_len(pkt) - len;
+	net_frag_read(pkt->frags, offset, &pos, len, input->line);
 
 	/* LF/CR will be removed if only the line is not NUL terminated */
 	if (input->line[len-1] != NVT_NUL) {
@@ -392,11 +392,11 @@ static inline void telnet_handle_input(struct net_buf *buf)
 }
 
 static void telnet_recv(struct net_context *client,
-			struct net_buf *buf,
+			struct net_pkt *pkt,
 			int status,
 			void *user_data)
 {
-	if (!buf || status) {
+	if (!pkt || status) {
 		telnet_end_client_connection();
 
 		SYS_LOG_DBG("Telnet client dropped (AF_INET%s) status %d",
@@ -405,9 +405,9 @@ static void telnet_recv(struct net_context *client,
 		return;
 	}
 
-	telnet_handle_input(buf);
+	telnet_handle_input(pkt);
 
-	net_buf_unref(buf);
+	net_pkt_unref(pkt);
 }
 
 /* Telnet server loop, used to send buffered output in the RB */
@@ -446,7 +446,7 @@ static void telnet_accept(struct net_context *client,
 		goto error;
 	}
 
-	if (telnet_setup_out_buf(client)) {
+	if (telnet_setup_out_pkt(client)) {
 		goto error;
 	}
 
@@ -503,7 +503,7 @@ error:
 }
 
 void telnet_register_input(struct k_fifo *avail, struct k_fifo *lines,
-			   uint8_t (*completion)(char *str, uint8_t len))
+			   u8_t (*completion)(char *str, u8_t len))
 {
 	ARG_UNUSED(completion);
 

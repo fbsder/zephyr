@@ -16,7 +16,7 @@
 #include <ztest.h>
 
 #include <net/net_if.h>
-#include <net/nbuf.h>
+#include <net/net_pkt.h>
 #include <net/net_ip.h>
 #include <net/net_core.h>
 #include <net/ethernet.h>
@@ -57,7 +57,7 @@ static struct k_sem wait_data;
 #define PEER_PORT 13856
 
 struct net_test_mld {
-	uint8_t mac_addr[sizeof(struct net_eth_addr)];
+	u8_t mac_addr[sizeof(struct net_eth_addr)];
 	struct net_linkaddr ll_addr;
 };
 
@@ -66,7 +66,7 @@ int net_test_dev_init(struct device *dev)
 	return 0;
 }
 
-static uint8_t *net_test_get_mac(struct device *dev)
+static u8_t *net_test_get_mac(struct device *dev)
 {
 	struct net_test_mld *context = dev->driver_data;
 
@@ -85,17 +85,17 @@ static uint8_t *net_test_get_mac(struct device *dev)
 
 static void net_test_iface_init(struct net_if *iface)
 {
-	uint8_t *mac = net_test_get_mac(net_if_get_device(iface));
+	u8_t *mac = net_test_get_mac(net_if_get_device(iface));
 
 	net_if_set_link_addr(iface, mac, sizeof(struct net_eth_addr),
 			     NET_LINK_ETHERNET);
 }
 
-static int tester_send(struct net_if *iface, struct net_buf *buf)
+static int tester_send(struct net_if *iface, struct net_pkt *pkt)
 {
-	struct net_icmp_hdr *icmp = NET_ICMP_BUF(buf);
+	struct net_icmp_hdr *icmp = NET_ICMP_HDR(pkt);
 
-	if (!buf->frags) {
+	if (!pkt->frags) {
 		TC_ERROR("No data to send!\n");
 		return -ENODATA;
 	}
@@ -111,7 +111,7 @@ static int tester_send(struct net_if *iface, struct net_buf *buf)
 		k_sem_give(&wait_data);
 	}
 
-	net_nbuf_unref(buf);
+	net_pkt_unref(pkt);
 
 	return 0;
 }
@@ -133,7 +133,7 @@ NET_DEVICE_INIT(net_test_mld, "net_test_mld",
 		127);
 
 static void group_joined(struct net_mgmt_event_callback *cb,
-			 uint32_t nm_event, struct net_if *iface)
+			 u32_t nm_event, struct net_if *iface)
 {
 	is_group_joined = true;
 
@@ -141,7 +141,7 @@ static void group_joined(struct net_mgmt_event_callback *cb,
 }
 
 static void group_left(struct net_mgmt_event_callback *cb,
-			 uint32_t nm_event, struct net_if *iface)
+			 u32_t nm_event, struct net_if *iface)
 {
 	is_group_left = true;
 
@@ -149,7 +149,7 @@ static void group_left(struct net_mgmt_event_callback *cb,
 }
 
 static struct mgmt_events {
-	uint32_t event;
+	u32_t event;
 	net_mgmt_event_handler_t handler;
 	struct net_mgmt_event_callback cb;
 } mgmt_events[] = {
@@ -286,65 +286,65 @@ static void verify_leave_group(void)
 
 static void send_query(struct net_if *iface)
 {
-	struct net_buf *buf;
+	struct net_pkt *pkt;
 	struct in6_addr dst;
-	uint16_t pos;
+	u16_t pos;
 
 	/* Sent to all MLDv2-capable routers */
 	net_ipv6_addr_create(&dst, 0xff02, 0, 0, 0, 0, 0, 0, 0x0016);
 
-	buf = net_nbuf_get_reserve_tx(net_if_get_ll_reserve(iface, &dst),
-				      K_FOREVER);
+	pkt = net_pkt_get_reserve_tx(net_if_get_ll_reserve(iface, &dst),
+				     K_FOREVER);
 
-	buf = net_ipv6_create_raw(buf,
+	pkt = net_ipv6_create_raw(pkt,
 				  &peer_addr,
 				  &dst,
 				  iface,
 				  NET_IPV6_NEXTHDR_HBHO);
 
-	NET_IPV6_BUF(buf)->hop_limit = 1; /* RFC 3810 ch 7.4 */
+	NET_IPV6_HDR(pkt)->hop_limit = 1; /* RFC 3810 ch 7.4 */
 
 	/* Add hop-by-hop option and router alert option, RFC 3810 ch 5. */
-	net_nbuf_append_u8(buf, IPPROTO_ICMPV6);
-	net_nbuf_append_u8(buf, 0); /* length (0 means 8 bytes) */
+	net_pkt_append_u8(pkt, IPPROTO_ICMPV6);
+	net_pkt_append_u8(pkt, 0); /* length (0 means 8 bytes) */
 
 #define ROUTER_ALERT_LEN 8
 
 	/* IPv6 router alert option is described in RFC 2711. */
-	net_nbuf_append_be16(buf, 0x0502); /* RFC 2711 ch 2.1 */
-	net_nbuf_append_be16(buf, 0); /* pkt contains MLD msg */
+	net_pkt_append_be16(pkt, 0x0502); /* RFC 2711 ch 2.1 */
+	net_pkt_append_be16(pkt, 0); /* pkt contains MLD msg */
 
-	net_nbuf_append_u8(buf, 1); /* padn */
-	net_nbuf_append_u8(buf, 0); /* padn len */
+	net_pkt_append_u8(pkt, 1); /* padn */
+	net_pkt_append_u8(pkt, 0); /* padn len */
 
 	/* ICMPv6 header */
-	net_nbuf_append_u8(buf, NET_ICMPV6_MLD_QUERY); /* type */
-	net_nbuf_append_u8(buf, 0); /* code */
-	net_nbuf_append_be16(buf, 0); /* chksum */
+	net_pkt_append_u8(pkt, NET_ICMPV6_MLD_QUERY); /* type */
+	net_pkt_append_u8(pkt, 0); /* code */
+	net_pkt_append_be16(pkt, 0); /* chksum */
 
-	net_nbuf_append_be16(buf, 3); /* maximum response code */
-	net_nbuf_append_be16(buf, 0); /* reserved field */
+	net_pkt_append_be16(pkt, 3); /* maximum response code */
+	net_pkt_append_be16(pkt, 0); /* reserved field */
 
-	net_nbuf_append(buf, sizeof(struct in6_addr),
-			(const uint8_t *)net_ipv6_unspecified_address(),
-			K_FOREVER); /* multicast address */
+	net_pkt_append(pkt, sizeof(struct in6_addr),
+		       (const u8_t *)net_ipv6_unspecified_address(),
+		       K_FOREVER); /* multicast address */
 
-	net_nbuf_append_be16(buf, 0); /* Resv, S, QRV and QQIC */
-	net_nbuf_append_be16(buf, 0); /* number of addresses */
+	net_pkt_append_be16(pkt, 0); /* Resv, S, QRV and QQIC */
+	net_pkt_append_be16(pkt, 0); /* number of addresses */
 
-	net_ipv6_finalize_raw(buf, NET_IPV6_NEXTHDR_HBHO);
+	net_ipv6_finalize_raw(pkt, NET_IPV6_NEXTHDR_HBHO);
 
-	net_nbuf_set_iface(buf, iface);
+	net_pkt_set_iface(pkt, iface);
 
-	net_nbuf_write_be16(buf, buf->frags,
-			    NET_IPV6H_LEN + ROUTER_ALERT_LEN + 2,
-			    &pos, ntohs(~net_calc_chksum_icmpv6(buf)));
+	net_pkt_write_be16(pkt, pkt->frags,
+			   NET_IPV6H_LEN + ROUTER_ALERT_LEN + 2,
+			   &pos, ntohs(~net_calc_chksum_icmpv6(pkt)));
 
-	net_recv_data(iface, buf);
+	net_recv_data(iface, pkt);
 }
 
 /* We are not really interested to parse the query at this point */
-static enum net_verdict handle_mld_query(struct net_buf *buf)
+static enum net_verdict handle_mld_query(struct net_pkt *pkt)
 {
 	is_query_received = true;
 

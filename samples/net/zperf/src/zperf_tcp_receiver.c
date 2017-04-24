@@ -13,7 +13,7 @@
 
 #include <net/net_core.h>
 #include <net/net_ip.h>
-#include <net/nbuf.h>
+#include <net/net_pkt.h>
 
 #include "zperf.h"
 #include "zperf_internal.h"
@@ -38,20 +38,20 @@ static struct sockaddr_in *in4_addr_my;
 #endif
 
 static void tcp_received(struct net_context *context,
-			 struct net_buf *buf,
+			 struct net_pkt *pkt,
 			 int status,
 			 void *user_data)
 {
 	struct session *session;
-	uint32_t time;
+	u32_t time;
 
-	if (!buf) {
+	if (!pkt) {
 		return;
 	}
 
 	time = k_cycle_get_32();
 
-	session = get_session(buf, SESSION_TCP);
+	session = get_session(pkt, SESSION_TCP);
 	if (!session) {
 		printk(TAG "ERROR! cannot get a session!\n");
 		return;
@@ -68,24 +68,24 @@ static void tcp_received(struct net_context *context,
 	case STATE_ONGOING:
 		session->counter++;
 
-		if (buf) {
-			session->length += net_nbuf_appdatalen(buf);
+		if (pkt) {
+			session->length += net_pkt_appdatalen(pkt);
 		}
 
-		if (!buf && status == 0) { /* EOF */
-			uint32_t rate_in_kbps;
-			uint32_t duration = HW_CYCLES_TO_USEC(
+		if (!pkt && status == 0) { /* EOF */
+			u32_t rate_in_kbps;
+			u32_t duration = HW_CYCLES_TO_USEC(
 				time_delta(session->start_time, time));
 
 			session->state = STATE_COMPLETED;
 
 			/* Compute baud rate */
 			if (duration != 0) {
-				rate_in_kbps = (uint32_t)
-					(((uint64_t)session->length *
-					  (uint64_t)8 *
-					  (uint64_t)USEC_PER_SEC) /
-					 ((uint64_t)duration * 1024));
+				rate_in_kbps = (u32_t)
+					(((u64_t)session->length *
+					  (u64_t)8 *
+					  (u64_t)USEC_PER_SEC) /
+					 ((u64_t)duration * 1024));
 			} else {
 				rate_in_kbps = 0;
 			}
@@ -107,7 +107,7 @@ static void tcp_received(struct net_context *context,
 		printk(TAG "Error! Unsupported case\n");
 	}
 
-	net_nbuf_unref(buf);
+	net_pkt_unref(pkt);
 }
 
 static void tcp_accepted(struct net_context *context,

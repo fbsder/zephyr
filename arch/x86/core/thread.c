@@ -29,25 +29,6 @@ void _thread_entry_wrapper(_thread_entry_t, void *,
 			   void *, void *);
 #endif
 
-#if defined(CONFIG_THREAD_MONITOR)
-/*
- * Add a thread to the kernel's list of active threads.
- */
-static ALWAYS_INLINE void thread_monitor_init(struct k_thread *thread)
-{
-	unsigned int key;
-
-	key = irq_lock();
-	thread->next_thread = _kernel.threads;
-	_kernel.threads = thread;
-	irq_unlock(key);
-}
-#else
-#define thread_monitor_init(thread) \
-	do {/* do nothing */     \
-	} while ((0))
-#endif /* CONFIG_THREAD_MONITOR */
-
 /**
  *
  * @brief Initialize a new execution thread
@@ -65,29 +46,16 @@ static ALWAYS_INLINE void thread_monitor_init(struct k_thread *thread)
  *
  * @return N/A
  */
-static void _new_thread_internal(char *pStackMem, unsigned stackSize,
+static void _new_thread_internal(char *pStackMem, unsigned int stackSize,
 				 int priority,
-				 unsigned options)
+				 unsigned int options,
+				 struct k_thread *thread)
 {
 	unsigned long *pInitialCtx;
-	/* ptr to the new task's k_thread */
-	struct k_thread *thread = (struct k_thread *)pStackMem;
 
 #if (defined(CONFIG_FP_SHARING) || defined(CONFIG_GDB_INFO))
 	thread->arch.excNestCount = 0;
 #endif /* CONFIG_FP_SHARING || CONFIG_GDB_INFO */
-
-	_init_thread_base(&thread->base, priority, _THREAD_PRESTART, options);
-
-	/* static threads overwrite it afterwards with real value */
-	thread->init_data = NULL;
-	thread->fn_abort = NULL;
-
-#ifdef CONFIG_THREAD_CUSTOM_DATA
-	/* Initialize custom data field (value is opaque to kernel) */
-
-	thread->custom_data = NULL;
-#endif
 
 	/*
 	 * The creation of the initial stack for the task has already been done.
@@ -230,15 +198,14 @@ __asm__("\t.globl _thread_entry\n"
 void _new_thread(char *pStackMem, size_t stackSize,
 		 _thread_entry_t pEntry,
 		 void *parameter1, void *parameter2, void *parameter3,
-		 int priority, unsigned options)
+		 int priority, unsigned int options)
 {
 	_ASSERT_VALID_PRIO(priority, pEntry);
 
 	unsigned long *pInitialThread;
+	struct k_thread *thread;
 
-#ifdef CONFIG_INIT_STACKS
-	memset(pStackMem, 0xaa, stackSize);
-#endif
+	thread = _new_thread_init(pStackMem, stackSize, priority, options);
 
 	/* carve the thread entry struct from the "base" of the stack */
 
@@ -288,5 +255,5 @@ void _new_thread(char *pStackMem, size_t stackSize,
 	 * aside for the thread's stack.
 	 */
 
-	_new_thread_internal(pStackMem, stackSize, priority, options);
+	_new_thread_internal(pStackMem, stackSize, priority, options, thread);
 }

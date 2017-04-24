@@ -7,13 +7,7 @@
 #include <kernel.h>
 #include <kernel_structs.h>
 #include <inttypes.h>
-
-#ifdef CONFIG_PRINTK
 #include <misc/printk.h>
-#define PRINTK(...) printk(__VA_ARGS__)
-#else
-#define PRINTK(...)
-#endif
 
 const NANO_ESF _default_esf = {
 	0xdeadbaad,
@@ -72,35 +66,39 @@ FUNC_NORETURN void _NanoFatalErrorHandler(unsigned int reason,
 		break;
 
 	case _NANO_ERR_INVALID_TASK_EXIT:
-		PRINTK("***** Invalid Exit Software Error! *****\n");
+		printk("***** Invalid Exit Software Error! *****\n");
 		break;
 
 #if defined(CONFIG_STACK_CANARIES)
 	case _NANO_ERR_STACK_CHK_FAIL:
-		PRINTK("***** Stack Check Fail! *****\n");
+		printk("***** Stack Check Fail! *****\n");
 		break;
 #endif /* CONFIG_STACK_CANARIES */
 
 	case _NANO_ERR_ALLOCATION_FAIL:
-		PRINTK("**** Kernel Allocation Failure! ****\n");
+		printk("**** Kernel Allocation Failure! ****\n");
+		break;
+
+	case _NANO_ERR_KERNEL_OOPS:
+		printk("***** Kernel OOPS! *****\n");
+		break;
+
+	case _NANO_ERR_KERNEL_PANIC:
+		printk("***** Kernel Panic! *****\n");
 		break;
 
 	default:
-		PRINTK("**** Unknown Fatal Error %d! ****\n", reason);
+		printk("**** Unknown Fatal Error %d! ****\n", reason);
 		break;
 	}
 
-	PRINTK("Current thread ID = %p\n"
-	       "Faulting instruction address = 0x%" PRIx32 "\n"
-	       "  ra: 0x%" PRIx32 "  gp: 0x%" PRIx32
-	       "  tp: 0x%" PRIx32 "  t0: 0x%" PRIx32 "\n"
-	       "  t1: 0x%" PRIx32 "  t2: 0x%" PRIx32
-	       "  t3: 0x%" PRIx32 "  t4: 0x%" PRIx32 "\n"
-	       "  t5: 0x%" PRIx32 "  t6: 0x%" PRIx32
-	       "  a0: 0x%" PRIx32 "  a1: 0x%" PRIx32 "\n"
-	       "  a2: 0x%" PRIx32 "  a3: 0x%" PRIx32
-	       "  a4: 0x%" PRIx32 "  a5: 0x%" PRIx32 "\n"
-	       "  a6: 0x%" PRIx32 "  a7: 0x%" PRIx32 "\n",
+	printk("Current thread ID = %p\n"
+	       "Faulting instruction address = 0x%x\n"
+	       "  ra: 0x%x  gp: 0x%x  tp: 0x%x  t0: 0x%x\n"
+	       "  t1: 0x%x  t2: 0x%x  t3: 0x%x  t4: 0x%x\n"
+	       "  t5: 0x%x  t6: 0x%x  a0: 0x%x  a1: 0x%x\n"
+	       "  a2: 0x%x  a3: 0x%x  a4: 0x%x  a5: 0x%x\n"
+	       "  a6: 0x%x  a7: 0x%x\n",
 	       k_current_get(),
 	       (esf->mepc == 0xdeadbaad) ? 0xdeadbaad : esf->mepc - 4,
 	       esf->ra, esf->gp, esf->tp, esf->t0,
@@ -138,33 +136,34 @@ FUNC_NORETURN void _NanoFatalErrorHandler(unsigned int reason,
  */
 void _SysFatalErrorHandler(unsigned int reason, const NANO_ESF *esf)
 {
-	ARG_UNUSED(reason);
 	ARG_UNUSED(esf);
 
 #if !defined(CONFIG_SIMPLE_FATAL_ERROR_HANDLER)
-	if (k_is_in_isr() || _is_thread_essential()) {
-		PRINTK("Fatal fault in %s! Spinning...\n",
-		       k_is_in_isr() ? "ISR" : "essential thread");
-		/* spin forever */
-		for (;;)
-			__asm__ volatile("nop");
+	if (reason == _NANO_ERR_KERNEL_PANIC) {
+		goto hang_system;
 	}
-	PRINTK("Fatal fault in thread! Aborting.\n");
+	if (k_is_in_isr() || _is_thread_essential()) {
+		printk("Fatal fault in %s! Spinning...\n",
+		       k_is_in_isr() ? "ISR" : "essential thread");
+		goto hang_system;
+	}
+	printk("Fatal fault in thread %p! Aborting.\n", _current);
 	k_thread_abort(_current);
 
+hang_system:
 #else
+	ARG_UNUSED(reason);
+#endif
+
 	for (;;) {
 		k_cpu_idle();
 	}
-
-#endif
-
 	CODE_UNREACHABLE;
 }
 
 
 #ifdef CONFIG_PRINTK
-static char *cause_str(uint32_t cause)
+static char *cause_str(u32_t cause)
 {
 	switch (cause) {
 	case 0:
@@ -188,13 +187,13 @@ static char *cause_str(uint32_t cause)
 
 FUNC_NORETURN void _Fault(const NANO_ESF *esf)
 {
-	uint32_t mcause;
+	u32_t mcause;
 
 	__asm__ volatile("csrr %0, mcause" : "=r" (mcause));
 
 	mcause &= SOC_MCAUSE_EXP_MASK;
 
-	PRINTK("Exception cause %s (%d)\n", cause_str(mcause), (int)mcause);
+	printk("Exception cause %s (%d)\n", cause_str(mcause), (int)mcause);
 
 	_NanoFatalErrorHandler(_NANO_ERR_CPU_EXCEPTION, esf);
 }

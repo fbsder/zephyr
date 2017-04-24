@@ -29,7 +29,7 @@ static struct pending_transfer pending_transfers[QM_SPI_NUM];
 struct spi_qmsi_config {
 	qm_spi_t spi;
 	char *cs_port;
-	uint32_t cs_pin;
+	u32_t cs_pin;
 };
 
 struct spi_qmsi_runtime {
@@ -40,12 +40,12 @@ struct spi_qmsi_runtime {
 	bool loopback;
 	struct k_sem sem;
 #ifdef CONFIG_DEVICE_POWER_MANAGEMENT
-	uint32_t device_power_state;
+	u32_t device_power_state;
 	qm_spi_context_t spi_ctx;
 #endif
 };
 
-static inline qm_spi_bmode_t config_to_bmode(uint8_t mode)
+static inline qm_spi_bmode_t config_to_bmode(u8_t mode)
 {
 	switch (mode) {
 	case SPI_MODE_CPHA:
@@ -65,8 +65,9 @@ static void spi_control_cs(struct device *dev, bool active)
 	const struct spi_qmsi_config *config = dev->config->config_info;
 	struct device *gpio = context->gpio_cs;
 
-	if (!gpio)
+	if (!gpio) {
 		return;
+	}
 
 	gpio_pin_write(gpio, config->cs_pin, !active);
 }
@@ -90,7 +91,7 @@ static int spi_qmsi_configure(struct device *dev,
 }
 
 static void transfer_complete(void *data, int error, qm_spi_status_t status,
-			      uint16_t len)
+			      u16_t len)
 {
 	const struct spi_qmsi_config *spi_config =
 			       ((struct device *)data)->config->config_info;
@@ -99,8 +100,9 @@ static void transfer_complete(void *data, int error, qm_spi_status_t status,
 	struct device *dev = pending->dev;
 	struct spi_qmsi_runtime *context;
 
-	if (!dev)
+	if (!dev) {
 		return;
+	}
 
 	context = dev->driver_data;
 
@@ -111,7 +113,7 @@ static void transfer_complete(void *data, int error, qm_spi_status_t status,
 	k_sem_give(&context->device_sync_sem);
 }
 
-static int spi_qmsi_slave_select(struct device *dev, uint32_t slave)
+static int spi_qmsi_slave_select(struct device *dev, u32_t slave)
 {
 	const struct spi_qmsi_config *spi_config = dev->config->config_info;
 	qm_spi_t spi = spi_config->spi;
@@ -119,28 +121,33 @@ static int spi_qmsi_slave_select(struct device *dev, uint32_t slave)
 	return qm_spi_slave_select(spi, 1 << (slave - 1)) ? -EIO : 0;
 }
 
-static inline uint8_t frame_size_to_dfs(qm_spi_frame_size_t frame_size)
+static inline u8_t frame_size_to_dfs(qm_spi_frame_size_t frame_size)
 {
-	if (frame_size <= QM_SPI_FRAME_SIZE_8_BIT)
+	if (frame_size <= QM_SPI_FRAME_SIZE_8_BIT) {
 		return 1;
-	if (frame_size <= QM_SPI_FRAME_SIZE_16_BIT)
+	}
+
+	if (frame_size <= QM_SPI_FRAME_SIZE_16_BIT) {
 		return 2;
-	if (frame_size <= QM_SPI_FRAME_SIZE_32_BIT)
+	}
+
+	if (frame_size <= QM_SPI_FRAME_SIZE_32_BIT) {
 		return 4;
+	}
 
 	/* This should never happen, it will crash later on. */
 	return 0;
 }
 
 static int spi_qmsi_transceive(struct device *dev,
-			       const void *tx_buf, uint32_t tx_buf_len,
-			       void *rx_buf, uint32_t rx_buf_len)
+			       const void *tx_buf, u32_t tx_buf_len,
+			       void *rx_buf, u32_t rx_buf_len)
 {
 	const struct spi_qmsi_config *spi_config = dev->config->config_info;
 	qm_spi_t spi = spi_config->spi;
 	struct spi_qmsi_runtime *context = dev->driver_data;
 	qm_spi_config_t *cfg = &context->cfg;
-	uint8_t dfs = frame_size_to_dfs(cfg->frame_size);
+	u8_t dfs = frame_size_to_dfs(cfg->frame_size);
 	qm_spi_async_transfer_t *xfer;
 	int rc;
 
@@ -161,24 +168,25 @@ static int spi_qmsi_transceive(struct device *dev,
 	/* This cast is necessary to drop the "const" modifier, since QMSI xfer
 	 * does not take a const pointer.
 	 */
-	xfer->tx = (uint8_t *)tx_buf;
+	xfer->tx = (u8_t *)tx_buf;
 	xfer->tx_len = tx_buf_len / dfs;
 	xfer->callback_data = dev;
 	xfer->callback = transfer_complete;
 
-	if (tx_buf_len == 0)
+	if (tx_buf_len == 0) {
 		cfg->transfer_mode = QM_SPI_TMOD_RX;
-	else if (rx_buf_len == 0)
+	} else if (rx_buf_len == 0) {
 		cfg->transfer_mode = QM_SPI_TMOD_TX;
-	else {
+	} else {
 		/* FIXME: QMSI expects rx_buf_len and tx_buf_len to
 		 * have the same size.
 		 */
 		cfg->transfer_mode = QM_SPI_TMOD_TX_RX;
 	}
 
-	if (context->loopback)
+	if (context->loopback) {
 		QM_SPI[spi]->ctrlr0 |= BIT(11);
+	}
 
 	rc = qm_spi_set_config(spi, cfg);
 	if (rc != 0) {
@@ -211,12 +219,14 @@ static struct device *gpio_cs_init(const struct spi_qmsi_config *config)
 {
 	struct device *gpio;
 
-	if (!config->cs_port)
+	if (!config->cs_port) {
 		return NULL;
+	}
 
 	gpio = device_get_binding(config->cs_port);
-	if (!gpio)
+	if (!gpio) {
 		return NULL;
+	}
 
 	if (gpio_pin_configure(gpio, config->cs_pin, GPIO_DIR_OUT) != 0) {
 		return NULL;
@@ -229,14 +239,14 @@ static struct device *gpio_cs_init(const struct spi_qmsi_config *config)
 	return gpio;
 }
 #ifdef CONFIG_DEVICE_POWER_MANAGEMENT
-static void spi_master_set_power_state(struct device *dev, uint32_t power_state)
+static void spi_master_set_power_state(struct device *dev, u32_t power_state)
 {
 	struct spi_qmsi_runtime *context = dev->driver_data;
 
 	context->device_power_state = power_state;
 }
 
-static uint32_t spi_master_get_power_state(struct device *dev)
+static u32_t spi_master_get_power_state(struct device *dev)
 {
 	struct spi_qmsi_runtime *context = dev->driver_data;
 
@@ -324,16 +334,16 @@ static int spi_master_resume_device_from_suspend(struct device *dev)
 * the *context may include IN data or/and OUT data
 */
 static int spi_master_qmsi_device_ctrl(struct device *port,
-				       uint32_t ctrl_command, void *context)
+				       u32_t ctrl_command, void *context)
 {
 	if (ctrl_command == DEVICE_PM_SET_POWER_STATE) {
-		if (*((uint32_t *)context) == DEVICE_PM_SUSPEND_STATE) {
+		if (*((u32_t *)context) == DEVICE_PM_SUSPEND_STATE) {
 			return spi_master_suspend_device(port);
-		} else if (*((uint32_t *)context) == DEVICE_PM_ACTIVE_STATE) {
+		} else if (*((u32_t *)context) == DEVICE_PM_ACTIVE_STATE) {
 			return spi_master_resume_device_from_suspend(port);
 		}
 	} else if (ctrl_command == DEVICE_PM_GET_POWER_STATE) {
-		*((uint32_t *)context) = spi_master_get_power_state(port);
+		*((u32_t *)context) = spi_master_get_power_state(port);
 		return 0;
 	}
 	return 0;

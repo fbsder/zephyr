@@ -34,7 +34,7 @@
 #include <net/net_context.h>
 #include <net/net_if.h>
 #include <net/buf.h>
-#include <net/nbuf.h>
+#include <net/net_pkt.h>
 #include <net/net_ip.h>
 
 #include <net/zoap.h>
@@ -60,7 +60,7 @@ static unsigned char heap[8192];
 
 #define ZOAP_BUF_SIZE 128
 
-NET_BUF_POOL_DEFINE(zoap_nbuf_pool, 4, 0, sizeof(struct net_nbuf), NULL);
+NET_PKT_TX_SLAB_DEFINE(zoap_pkt_slab, 4);
 NET_BUF_POOL_DEFINE(zoap_data_pool, 4, ZOAP_BUF_SIZE, 0, NULL);
 
 /*
@@ -76,12 +76,13 @@ const char psk_id[] = "Client_identity\0";
 
 static mbedtls_ssl_context *curr_ctx;
 
-static int send_response(struct zoap_packet *request, uint8_t response_code)
+static int send_response(struct zoap_packet *request, u8_t response_code)
 {
-	struct net_buf *buf, *frag;
+	struct net_pkt *pkt;
+	struct net_buf *frag;
 	struct zoap_packet response;
-	uint8_t code, type;
-	uint16_t id;
+	u8_t code, type;
+	u16_t id;
 	int r;
 
 	code = zoap_header_get_code(request);
@@ -92,8 +93,8 @@ static int send_response(struct zoap_packet *request, uint8_t response_code)
 	printk("type: %u code %u id %u\n", type, code, id);
 	printk("*******\n");
 
-	buf = net_buf_alloc(&zoap_nbuf_pool, K_NO_WAIT);
-	if (!buf) {
+	pkt = net_pkt_get_reserve(&zoap_pkt_slab, 0, K_NO_WAIT);
+	if (!pkt) {
 		return -ENOMEM;
 	}
 
@@ -102,9 +103,9 @@ static int send_response(struct zoap_packet *request, uint8_t response_code)
 		return -ENOMEM;
 	}
 
-	net_buf_frag_add(buf, frag);
+	net_pkt_frag_add(pkt, frag);
 
-	r = zoap_packet_init(&response, buf);
+	r = zoap_packet_init(&response, pkt);
 	if (r < 0) {
 		return -EINVAL;
 	}
@@ -123,7 +124,7 @@ static int send_response(struct zoap_packet *request, uint8_t response_code)
 		r = 0;
 	}
 
-	net_buf_unref(buf);
+	net_pkt_unref(pkt);
 
 	return r;
 }
@@ -150,10 +151,11 @@ static int piggyback_get(struct zoap_resource *resource,
 			 struct zoap_packet *request,
 			 const struct sockaddr *from)
 {
-	struct net_buf *buf, *frag;
+	struct net_pkt *pkt;
+	struct net_buf *frag;
 	struct zoap_packet response;
-	uint8_t *payload, code, type;
-	uint16_t len, id;
+	u8_t *payload, code, type;
+	u16_t len, id;
 	int r;
 
 	code = zoap_header_get_code(request);
@@ -164,8 +166,8 @@ static int piggyback_get(struct zoap_resource *resource,
 	printk("type: %u code %u id %u\n", type, code, id);
 	printk("*******\n");
 
-	buf = net_buf_alloc(&zoap_nbuf_pool, K_NO_WAIT);
-	if (!buf) {
+	pkt = net_pkt_get_reserve(&zoap_pkt_slab, 0, K_NO_WAIT);
+	if (!pkt) {
 		return -ENOMEM;
 	}
 
@@ -174,9 +176,9 @@ static int piggyback_get(struct zoap_resource *resource,
 		return -ENOMEM;
 	}
 
-	net_buf_frag_add(buf, frag);
+	net_pkt_frag_add(pkt, frag);
 
-	r = zoap_packet_init(&response, buf);
+	r = zoap_packet_init(&response, pkt);
 	if (r < 0) {
 		return -EINVAL;
 	}
@@ -212,7 +214,7 @@ static int piggyback_get(struct zoap_resource *resource,
 		r = 0;
 	}
 
-	net_buf_unref(buf);
+	net_pkt_unref(pkt);
 
 	return r;
 }
@@ -221,10 +223,11 @@ static int query_get(struct zoap_resource *resource,
 		     struct zoap_packet *request, const struct sockaddr *from)
 {
 	struct zoap_option options[4];
-	struct net_buf *buf, *frag;
+	struct net_pkt *pkt;
+	struct net_buf *frag;
 	struct zoap_packet response;
-	uint8_t *payload, code, type;
-	uint16_t len, id;
+	u8_t *payload, code, type;
+	u16_t len, id;
 	int i, r;
 
 	code = zoap_header_get_code(request);
@@ -258,8 +261,8 @@ static int query_get(struct zoap_resource *resource,
 
 	printk("*******\n");
 
-	buf = net_buf_alloc(&zoap_nbuf_pool, K_NO_WAIT);
-	if (!buf) {
+	pkt = net_pkt_get_reserve(&zoap_pkt_slab, 0, K_NO_WAIT);
+	if (!pkt) {
 		return -ENOMEM;
 	}
 
@@ -268,9 +271,9 @@ static int query_get(struct zoap_resource *resource,
 		return -ENOMEM;
 	}
 
-	net_buf_frag_add(buf, frag);
+	net_pkt_frag_add(pkt, frag);
 
-	r = zoap_packet_init(&response, buf);
+	r = zoap_packet_init(&response, pkt);
 	if (r < 0) {
 		return -EINVAL;
 	}
@@ -307,7 +310,7 @@ static int query_get(struct zoap_resource *resource,
 		r = 0;
 	}
 
-	net_buf_unref(buf);
+	net_pkt_unref(pkt);
 
 	return r;
 }
@@ -334,9 +337,9 @@ static struct zoap_resource resources[] = {
 };
 
 struct dtls_timing_context {
-	uint32_t snapshot;
-	uint32_t int_ms;
-	uint32_t fin_ms;
+	u32_t snapshot;
+	u32_t int_ms;
+	u32_t fin_ms;
 };
 
 static void my_debug(void *ctx, int level,
@@ -357,7 +360,7 @@ static void my_debug(void *ctx, int level,
 	mbedtls_printf("%s:%04d: |%d| %s", basename, line, level, str);
 }
 
-void dtls_timing_set_delay(void *data, uint32_t int_ms, uint32_t fin_ms)
+void dtls_timing_set_delay(void *data, u32_t int_ms, u32_t fin_ms)
 {
 	struct dtls_timing_context *ctx = (struct dtls_timing_context *)data;
 
@@ -394,7 +397,7 @@ int dtls_timing_get_delay(void *data)
 static int entropy_source(void *data, unsigned char *output, size_t len,
 			  size_t *olen)
 {
-	uint32_t seed;
+	u32_t seed;
 
 	ARG_UNUSED(data);
 
@@ -416,8 +419,9 @@ void dtls_server(void)
 	int len, ret = 0;
 	struct udp_context ctx;
 	struct dtls_timing_context timer;
-	struct zoap_packet pkt;
-	struct net_buf *nbuf, *frag;
+	struct zoap_packet zpkt;
+	struct net_pkt *pkt;
+	struct net_buf *frag;
 
 	mbedtls_ssl_cookie_ctx cookie_ctx;
 	mbedtls_entropy_context entropy;
@@ -549,9 +553,9 @@ reset:
 
 	do {
 		/* Read the request */
-		nbuf = net_buf_alloc(&zoap_nbuf_pool, K_NO_WAIT);
-		if (!nbuf) {
-			mbedtls_printf("Could not get buffer from pool\n");
+		pkt = net_pkt_get_reserve(&zoap_pkt_slab, 0, K_NO_WAIT);
+		if (!pkt) {
+			mbedtls_printf("Could not get packet from slab\n");
 			goto exit;
 		}
 
@@ -561,7 +565,7 @@ reset:
 			goto exit;
 		}
 
-		net_buf_frag_add(nbuf, frag);
+		net_pkt_frag_add(pkt, frag);
 		len = ZOAP_BUF_SIZE - 1;
 		memset(frag->data, 0, ZOAP_BUF_SIZE);
 
@@ -572,7 +576,7 @@ reset:
 		}
 
 		if (ret <= 0) {
-			net_buf_unref(nbuf);
+			net_pkt_unref(pkt);
 
 			switch (ret) {
 			case MBEDTLS_ERR_SSL_TIMEOUT:
@@ -594,20 +598,20 @@ reset:
 		len = ret;
 		frag->len = len;
 
-		ret = zoap_packet_parse(&pkt, nbuf);
+		ret = zoap_packet_parse(&zpkt, pkt);
 		if (ret) {
 			mbedtls_printf("Could not parse packet\n");
 			goto exit;
 		}
 
-		ret = zoap_handle_request(&pkt, resources,
+		ret = zoap_handle_request(&zpkt, resources,
 					  (const struct sockaddr *)&ssl);
 		if (ret < 0) {
 			mbedtls_printf("No handler for such request (%d)\n",
 				       ret);
 		}
 
-		net_buf_unref(nbuf);
+		net_pkt_unref(pkt);
 
 	} while (1);
 
@@ -628,7 +632,7 @@ exit:
 }
 
 #define STACK_SIZE		4096
-uint8_t stack[STACK_SIZE];
+u8_t stack[STACK_SIZE];
 
 static inline int init_app(void)
 {

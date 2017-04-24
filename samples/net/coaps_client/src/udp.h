@@ -11,13 +11,13 @@
 
 struct udp_context {
 	struct net_context *net_ctx;
-	struct net_buf *rx_nbuf;
+	struct net_pkt *rx_pkt;
 	struct k_sem rx_sem;
 	int remaining;
 };
 
 int udp_init(struct udp_context *ctx);
 int udp_tx(void *ctx, const unsigned char *buf, size_t size);
-int udp_rx(void *ctx, unsigned char *buf, size_t size, uint32_t timeout);
+int udp_rx(void *ctx, unsigned char *buf, size_t size, u32_t timeout);
 
 #endif

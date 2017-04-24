@@ -11,35 +11,35 @@
 #include <sections.h>
 
 #include <net/net_mgmt.h>
-#include <net/nbuf.h>
+#include <net/net_pkt.h>
 
 #define TEST_MGMT_REQUEST		0x17AB1234
 #define TEST_MGMT_EVENT			0x97AB1234
 #define TEST_MGMT_EVENT_UNHANDLED	0x97AB4321
 
 /* Notifier infra */
-static uint32_t event2throw;
-static uint32_t throw_times;
+static u32_t event2throw;
+static u32_t throw_times;
 static int throw_sleep;
 static char __noinit __stack thrower_stack[512];
 static struct k_sem thrower_lock;
 
 /* Receiver infra */
-static uint32_t rx_event;
-static uint32_t rx_calls;
+static u32_t rx_event;
+static u32_t rx_calls;
 static struct net_mgmt_event_callback rx_cb;
 
 static struct in6_addr addr6 = { { { 0xfe, 0x80, 0, 0, 0, 0, 0, 0,
 				     0, 0, 0, 0, 0, 0, 0, 0x1 } } };
 
-static int test_mgmt_request(uint32_t mgmt_request,
-			     struct net_if *iface, void *data, uint32_t len)
+static int test_mgmt_request(u32_t mgmt_request,
+			     struct net_if *iface, void *data, u32_t len)
 {
-	uint32_t *test_data = data;
+	u32_t *test_data = data;
 
 	ARG_UNUSED(iface);
 
-	if (len == sizeof(uint32_t)) {
+	if (len == sizeof(u32_t)) {
 		*test_data = 1;
 
 		return 0;
@@ -59,14 +59,14 @@ int fake_dev_init(struct device *dev)
 
 static void fake_iface_init(struct net_if *iface)
 {
-	uint8_t mac[8] = { 0x00, 0x00, 0x00, 0x00, 0x0a, 0x0b, 0x0c, 0x0d};
+	u8_t mac[8] = { 0x00, 0x00, 0x00, 0x00, 0x0a, 0x0b, 0x0c, 0x0d};
 
 	net_if_set_link_addr(iface, mac, 8, NET_LINK_DUMMY);
 }
 
-static int fake_iface_send(struct net_if *iface, struct net_buf *buf)
+static int fake_iface_send(struct net_if *iface, struct net_pkt *pkt)
 {
-	net_nbuf_unref(buf);
+	net_pkt_unref(pkt);
 
 	return NET_OK;
 }
@@ -82,7 +82,7 @@ NET_DEVICE_INIT(net_event_test, "net_event_test",
 
 static inline int test_requesting_nm(void)
 {
-	uint32_t data = 0;
+	u32_t data = 0;
 
 	TC_PRINT("- Request Net MGMT\n");
 
@@ -111,7 +111,7 @@ static void thrower_thread(void)
 }
 
 static void receiver_cb(struct net_mgmt_event_callback *cb,
-			uint32_t nm_event, struct net_if *iface)
+			u32_t nm_event, struct net_if *iface)
 {
 	TC_PRINT("\t\tReceived event 0x%08X\n", nm_event);
 
@@ -119,7 +119,7 @@ static void receiver_cb(struct net_mgmt_event_callback *cb,
 	rx_calls++;
 }
 
-static inline int test_sending_event(uint32_t times, bool receiver)
+static inline int test_sending_event(u32_t times, bool receiver)
 {
 	int ret = TC_PASS;
 
@@ -156,9 +156,9 @@ static inline int test_sending_event(uint32_t times, bool receiver)
 	return ret;
 }
 
-static int test_synchronous_event_listener(uint32_t times, bool on_iface)
+static int test_synchronous_event_listener(u32_t times, bool on_iface)
 {
-	uint32_t event_mask;
+	u32_t event_mask;
 	int ret;
 
 	TC_PRINT("- Synchronous event listener %s\n",
@@ -210,7 +210,7 @@ static void initialize_event_tests(void)
 		       NULL, NULL, NULL, K_PRIO_COOP(7), 0, 0);
 }
 
-static int test_core_event(uint32_t event, bool (*func)(void))
+static int test_core_event(u32_t event, bool (*func)(void))
 {
 	int ret = TC_PASS;
 

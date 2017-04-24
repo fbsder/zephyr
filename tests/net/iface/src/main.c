@@ -61,8 +61,8 @@ static struct k_sem wait_data;
 #define WAIT_TIME 250
 
 struct net_if_test {
-	uint8_t idx;
-	uint8_t mac_addr[sizeof(struct net_eth_addr)];
+	u8_t idx;
+	u8_t mac_addr[sizeof(struct net_eth_addr)];
 	struct net_linkaddr ll_addr;
 };
 
@@ -71,7 +71,7 @@ static int net_iface_dev_init(struct device *dev)
 	return 0;
 }
 
-static uint8_t *net_iface_get_mac(struct device *dev)
+static u8_t *net_iface_get_mac(struct device *dev)
 {
 	struct net_if_test *data = dev->driver_data;
 
@@ -93,15 +93,15 @@ static uint8_t *net_iface_get_mac(struct device *dev)
 
 static void net_iface_init(struct net_if *iface)
 {
-	uint8_t *mac = net_iface_get_mac(net_if_get_device(iface));
+	u8_t *mac = net_iface_get_mac(net_if_get_device(iface));
 
 	net_if_set_link_addr(iface, mac, sizeof(struct net_eth_addr),
 			     NET_LINK_ETHERNET);
 }
 
-static int sender_iface(struct net_if *iface, struct net_buf *buf)
+static int sender_iface(struct net_if *iface, struct net_pkt *pkt)
 {
-	if (!buf->frags) {
+	if (!pkt->frags) {
 		DBG("No data to send!\n");
 		return -ENODATA;
 	}
@@ -112,9 +112,9 @@ static int sender_iface(struct net_if *iface, struct net_buf *buf)
 		DBG("Sending at iface %d %p\n", net_if_get_by_iface(iface),
 		    iface);
 
-		if (net_nbuf_iface(buf) != iface) {
+		if (net_pkt_iface(pkt) != iface) {
 			DBG("Invalid interface %p, expecting %p\n",
-				 net_nbuf_iface(buf), iface);
+				 net_pkt_iface(pkt), iface);
 			test_failed = true;
 		}
 
@@ -125,7 +125,7 @@ static int sender_iface(struct net_if *iface, struct net_buf *buf)
 		}
 	}
 
-	net_nbuf_unref(buf);
+	net_pkt_unref(pkt);
 
 	k_sem_give(&wait_data);
 
@@ -280,18 +280,18 @@ static void iface_setup(void)
 
 static bool send_iface(struct net_if *iface, int val, bool expect_fail)
 {
-	static uint8_t data[] = { 't', 'e', 's', 't', '\0' };
-	struct net_buf *buf;
+	static u8_t data[] = { 't', 'e', 's', 't', '\0' };
+	struct net_pkt *pkt;
 	int ret;
 
-	buf = net_nbuf_get_reserve_tx(0, K_FOREVER);
-	net_nbuf_set_iface(buf, iface);
+	pkt = net_pkt_get_reserve_tx(0, K_FOREVER);
+	net_pkt_set_iface(pkt, iface);
 
-	net_nbuf_append(buf, sizeof(data), data, K_FOREVER);
+	net_pkt_append(pkt, sizeof(data), data, K_FOREVER);
 
-	ret = net_send_data(buf);
+	ret = net_send_data(pkt);
 	if (!expect_fail && ret < 0) {
-		DBG("Cannot send test buffer (%d)\n", ret);
+		DBG("Cannot send test packet (%d)\n", ret);
 		return false;
 	}
 

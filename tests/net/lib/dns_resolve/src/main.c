@@ -56,15 +56,15 @@ static bool test_started;
 static bool timeout_query;
 static struct k_sem wait_data;
 static struct k_sem wait_data2;
-static uint16_t current_dns_id;
+static u16_t current_dns_id;
 static struct dns_addrinfo addrinfo;
 
 /* this must be higher that the DNS_TIMEOUT */
 #define WAIT_TIME (DNS_TIMEOUT + 300)
 
 struct net_if_test {
-	uint8_t idx;
-	uint8_t mac_addr[sizeof(struct net_eth_addr)];
+	u8_t idx;
+	u8_t mac_addr[sizeof(struct net_eth_addr)];
 	struct net_linkaddr ll_addr;
 };
 
@@ -73,7 +73,7 @@ static int net_iface_dev_init(struct device *dev)
 	return 0;
 }
 
-static uint8_t *net_iface_get_mac(struct device *dev)
+static u8_t *net_iface_get_mac(struct device *dev)
 {
 	struct net_if_test *data = dev->driver_data;
 
@@ -95,14 +95,14 @@ static uint8_t *net_iface_get_mac(struct device *dev)
 
 static void net_iface_init(struct net_if *iface)
 {
-	uint8_t *mac = net_iface_get_mac(net_if_get_device(iface));
+	u8_t *mac = net_iface_get_mac(net_if_get_device(iface));
 
 	net_if_set_link_addr(iface, mac, sizeof(struct net_eth_addr),
 			     NET_LINK_ETHERNET);
 }
 
 static inline int get_slot_by_id(struct dns_resolve_context *ctx,
-				 uint16_t dns_id)
+				 u16_t dns_id)
 {
 	int i;
 
@@ -115,9 +115,9 @@ static inline int get_slot_by_id(struct dns_resolve_context *ctx,
 	return -1;
 }
 
-static int sender_iface(struct net_if *iface, struct net_buf *buf)
+static int sender_iface(struct net_if *iface, struct net_pkt *pkt)
 {
-	if (!buf->frags) {
+	if (!pkt->frags) {
 		DBG("No data to send!\n");
 		return -ENODATA;
 	}
@@ -130,9 +130,9 @@ static int sender_iface(struct net_if *iface, struct net_buf *buf)
 		DBG("Sending at iface %d %p\n", net_if_get_by_iface(iface),
 		    iface);
 
-		if (net_nbuf_iface(buf) != iface) {
+		if (net_pkt_iface(pkt) != iface) {
 			DBG("Invalid interface %p, expecting %p\n",
-				 net_nbuf_iface(buf), iface);
+				 net_pkt_iface(pkt), iface);
 			test_failed = true;
 		}
 
@@ -170,7 +170,7 @@ static int sender_iface(struct net_if *iface, struct net_buf *buf)
 	}
 
 out:
-	net_nbuf_unref(buf);
+	net_pkt_unref(pkt);
 
 	return 0;
 }
@@ -504,7 +504,7 @@ static void verify_cancelled(void)
 static void dns_query_ipv4_cancel(void)
 {
 	int expected_status = DNS_EAI_CANCELED;
-	uint16_t dns_id;
+	u16_t dns_id;
 	int ret;
 
 	timeout_query = true;
@@ -530,7 +530,7 @@ static void dns_query_ipv4_cancel(void)
 static void dns_query_ipv6_cancel(void)
 {
 	int expected_status = DNS_EAI_CANCELED;
-	uint16_t dns_id;
+	u16_t dns_id;
 	int ret;
 
 	timeout_query = true;

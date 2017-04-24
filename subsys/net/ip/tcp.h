@@ -17,7 +17,7 @@
 
 #include <net/net_core.h>
 #include <net/net_ip.h>
-#include <net/nbuf.h>
+#include <net/net_pkt.h>
 #include <net/net_context.h>
 
 #include "connection.h"
@@ -70,7 +70,7 @@ enum net_tcp_state {
 #define NET_TCP_URG 0x20
 #define NET_TCP_CTL 0x3f
 
-#define NET_TCP_FLAGS(nbuf) (NET_TCP_BUF(nbuf)->flags & NET_TCP_CTL)
+#define NET_TCP_FLAGS(net_pkt) (NET_TCP_HDR(net_pkt)->flags & NET_TCP_CTL)
 
 /* TCP max window size */
 #define NET_TCP_MAX_WIN   (4 * 1024)
@@ -111,31 +111,36 @@ struct net_tcp {
 	sys_slist_t sent_list;
 
 	/** Max acknowledgment. */
-	uint32_t recv_max_ack;
+	u32_t recv_max_ack;
 
 	/** Current sequence number. */
-	uint32_t send_seq;
+	u32_t send_seq;
 
 	/** Acknowledgment number to send in next packet. */
-	uint32_t send_ack;
+	u32_t send_ack;
 
 	/** Last ACK value sent */
-	uint32_t sent_ack;
+	u32_t sent_ack;
 
 	/** Current retransmit period */
-	uint32_t retry_timeout_shift : 5;
+	u32_t retry_timeout_shift : 5;
 	/** Flags for the TCP */
-	uint32_t flags : 8;
+	u32_t flags : 8;
 	/** Current TCP state */
-	uint32_t state : 4;
+	u32_t state : 4;
 	/* A FIN packet has been queued for transmission */
-	uint32_t fin_queued : 1;
+	u32_t fin_queued : 1;
 	/* An outbound FIN packet has been sent */
-	uint32_t fin_sent : 1;
+	u32_t fin_sent : 1;
 	/* An inbound FIN packet has been received */
-	uint32_t fin_rcvd : 1;
-	/** Remaining bits in this uint32_t */
-	uint32_t _padding : 12;
+	u32_t fin_rcvd : 1;
+	/* Tells if ack timer has been already cancelled. It might happen
+	 * that the timer is executed even if it is cancelled, this is because
+	 * of various timing issues when timer is scheduled to run.
+	 */
+	u32_t ack_timer_cancelled : 1;
+	/** Remaining bits in this u32_t */
+	u32_t _padding : 11;
 
 	/** Accept callback to be called when the connection has been
 	 * established.
@@ -171,8 +176,8 @@ static inline bool net_tcp_is_used(struct net_tcp *tcp)
  */
 static inline int net_tcp_register(const struct sockaddr *remote_addr,
 				   const struct sockaddr *local_addr,
-				   uint16_t remote_port,
-				   uint16_t local_port,
+				   u16_t remote_port,
+				   u16_t local_port,
 				   net_conn_cb_t cb,
 				   void *user_data,
 				   struct net_conn_handle **handle)
@@ -234,39 +239,39 @@ int net_tcp_release(struct net_tcp *tcp);
  * @param local Source address, or NULL to use the local address of
  *        the TCP context
  * @param remote Peer address
- * @param send_buf Full IP + TCP header that is to be sent.
+ * @param send_pkt Full IP + TCP header that is to be sent.
  *
  * @return 0 if ok, < 0 if error
  */
-int net_tcp_prepare_segment(struct net_tcp *tcp, uint8_t flags,
+int net_tcp_prepare_segment(struct net_tcp *tcp, u8_t flags,
 			    void *options, size_t optlen,
 			    const struct sockaddr_ptr *local,
 			    const struct sockaddr *remote,
-			    struct net_buf **send_buf);
+			    struct net_pkt **send_pkt);
 
 /**
  * @brief Prepare a TCP ACK message that can be send to peer.
  *
  * @param tcp TCP context
  * @param remote Peer address
- * @param buf Network buffer
+ * @param pkt Network buffer
  *
  * @return 0 if ok, < 0 if error
  */
 int net_tcp_prepare_ack(struct net_tcp *tcp, const struct sockaddr *remote,
-			struct net_buf **buf);
+			struct net_pkt **pkt);
 
 /**
  * @brief Prepare a TCP RST message that can be send to peer.
  *
  * @param tcp TCP context
  * @param remote Peer address
- * @param buf Network buffer
+ * @param pkt Network buffer
  *
  * @return 0 if ok, < 0 if error
  */
 int net_tcp_prepare_reset(struct net_tcp *tcp, const struct sockaddr *remote,
-			  struct net_buf **buf);
+			  struct net_pkt **pkt);
 
 typedef void (*net_tcp_cb_t)(struct net_tcp *tcp, void *user_data);
 
@@ -292,19 +297,19 @@ int net_tcp_send_data(struct net_context *context);
  * @brief Enqueue a single packet for transmission
  *
  * @param context TCP context
- * @param buf Packet
+ * @param pkt Packet
  *
  * @return 0 if ok, < 0 if error
  */
-int net_tcp_queue_data(struct net_context *context, struct net_buf *buf);
+int net_tcp_queue_data(struct net_context *context, struct net_pkt *pkt);
 
 /**
  * @brief Sends one TCP packet initialized with the _prepare_*()
  *        family of functions.
  *
- * @param buf Packet
+ * @param pkt Packet
  */
-int net_tcp_send_buf(struct net_buf *buf);
+int net_tcp_send_pkt(struct net_pkt *pkt);
 
 /**
  * @brief Handle a received TCP ACK
@@ -312,7 +317,7 @@ int net_tcp_send_buf(struct net_buf *buf);
  * @param cts Context
  * @param seq Received ACK sequence number
  */
-void net_tcp_ack_received(struct net_context *ctx, uint32_t ack);
+void net_tcp_ack_received(struct net_context *ctx, u32_t ack);
 
 /**
  * @brief Calculates and returns the MSS for a given TCP context
@@ -321,7 +326,7 @@ void net_tcp_ack_received(struct net_context *ctx, uint32_t ack);
  *
  * @return Maximum Segment Size
  */
-uint16_t net_tcp_get_recv_mss(const struct net_tcp *tcp);
+u16_t net_tcp_get_recv_mss(const struct net_tcp *tcp);
 
 /**
  * @brief Obtains the state for a TCP context

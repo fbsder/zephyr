@@ -17,36 +17,8 @@
 
 #include <kernel.h>
 #include <kernel_structs.h>
-
-#ifdef CONFIG_PRINTK
 #include <misc/printk.h>
-#define PR_EXC(...) printk(__VA_ARGS__)
-#else
-#define PR_EXC(...)
-#endif /* CONFIG_PRINTK */
 
-/*
- * Define a default ESF for use with _NanoFatalErrorHandler() in the event
- * the caller does not have a NANO_ESF to pass
- */
-const NANO_ESF _default_esf = {
-	{0xdeaddead}, /* r0/a1 */
-	{0xdeaddead}, /* r1/a2 */
-	{0xdeaddead}, /* r2/a3 */
-	{0xdeaddead}, /* r3/a4 */
-	{0xdeaddead}, /* r12/ip */
-	{0xdeaddead}, /* r14/lr */
-	{0xdeaddead}, /* r15/pc */
-	 0xdeaddead,  /* xpsr */
-#ifdef CONFIG_FLOAT
-	{0xdeaddead, 0xdeaddead, 0xdeaddead, 0xdeaddead,   /* s0 .. s3 */
-	 0xdeaddead, 0xdeaddead, 0xdeaddead, 0xdeaddead,    /* s4 .. s7 */
-	 0xdeaddead, 0xdeaddead, 0xdeaddead, 0xdeaddead,    /* s8 .. s11 */
-	 0xdeaddead, 0xdeaddead, 0xdeaddead, 0xdeaddead},   /* s12 .. s15 */
-	0xdeaddead,  /* fpscr */
-	0xdeaddead,  /* undefined */
-#endif
-};
 
 /**
  *
@@ -61,35 +33,47 @@ const NANO_ESF _default_esf = {
  * fatal error does not have a hardware generated ESF, the caller should either
  * create its own or use a pointer to the global default ESF <_default_esf>.
  *
+ * Unlike other arches, this function may return if _SysFatalErrorHandler
+ * determines that only the current thread should be aborted and the CPU
+ * was in handler mode. PendSV will be asserted in this case and the current
+ * thread taken off the run queue. Leaving the exception will immediately
+ * trigger a context switch.
+ *
  * @param reason the reason that the handler was called
  * @param pEsf pointer to the exception stack frame
- *
- * @return This function does not return.
  */
-FUNC_NORETURN void _NanoFatalErrorHandler(unsigned int reason,
+void _NanoFatalErrorHandler(unsigned int reason,
 					  const NANO_ESF *pEsf)
 {
 	switch (reason) {
 	case _NANO_ERR_INVALID_TASK_EXIT:
-		PR_EXC("***** Invalid Exit Software Error! *****\n");
+		printk("***** Invalid Exit Software Error! *****\n");
 		break;
 
 #if defined(CONFIG_STACK_CANARIES)
 	case _NANO_ERR_STACK_CHK_FAIL:
-		PR_EXC("***** Stack Check Fail! *****\n");
+		printk("***** Stack Check Fail! *****\n");
 		break;
 #endif /* CONFIG_STACK_CANARIES */
 
 	case _NANO_ERR_ALLOCATION_FAIL:
-		PR_EXC("**** Kernel Allocation Failure! ****\n");
+		printk("**** Kernel Allocation Failure! ****\n");
+		break;
+
+	case _NANO_ERR_KERNEL_OOPS:
+		printk("***** Kernel OOPS! *****\n");
+		break;
+
+	case _NANO_ERR_KERNEL_PANIC:
+		printk("***** Kernel Panic! *****\n");
 		break;
 
 	default:
-		PR_EXC("**** Unknown Fatal Error %d! ****\n", reason);
+		printk("**** Unknown Fatal Error %d! ****\n", reason);
 		break;
 	}
-	PR_EXC("Current thread ID = %p\n"
-	       "Faulting instruction address = 0x%" PRIx32 "\n",
+	printk("Current thread ID = %p\n"
+	       "Faulting instruction address = 0x%x\n",
 	       k_current_get(), pEsf->pc);
 
 	/*
@@ -101,7 +85,9 @@ FUNC_NORETURN void _NanoFatalErrorHandler(unsigned int reason,
 	 */
 
 	_SysFatalErrorHandler(reason, pEsf);
+}
 
-	for (;;)
-		;
+void _do_kernel_oops(const NANO_ESF *esf)
+{
+	_NanoFatalErrorHandler(esf->r0, esf);
 }

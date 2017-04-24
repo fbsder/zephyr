@@ -6,7 +6,7 @@
 
 #include <net/http.h>
 #include <misc/printk.h>
-#include <net/nbuf.h>
+#include <net/net_pkt.h>
 #include <net/net_context.h>
 
 #define HTTP_STATUS_200_OK	"HTTP/1.1 200 OK\r\n" \
@@ -23,7 +23,7 @@
 #define HTTP_STATUS_404_NF	"HTTP/1.1 404 Not Found\r\n" \
 				"\r\n"
 
-static inline uint16_t http_strlen(const char *str)
+static inline u16_t http_strlen(const char *str)
 {
 	if (str) {
 		return strlen(str);
@@ -32,36 +32,36 @@ static inline uint16_t http_strlen(const char *str)
 	return 0;
 }
 
-static int http_add_header(struct net_buf *tx, int32_t timeout, const char *str)
+static int http_add_header(struct net_pkt *tx, s32_t timeout, const char *str)
 {
-	if (net_nbuf_append(tx, strlen(str), (uint8_t *)str, timeout)) {
+	if (net_pkt_append(tx, strlen(str), (u8_t *)str, timeout)) {
 		return 0;
 	}
 
 	return -ENOMEM;
 }
 
-static int http_add_chunk(struct net_buf *tx, int32_t timeout, const char *str)
+static int http_add_chunk(struct net_pkt *tx, s32_t timeout, const char *str)
 {
 	char chunk_header[16];
 	char *rn = "\r\n";
-	uint16_t str_len;
+	u16_t str_len;
 
 	str_len = http_strlen(str);
 
 	snprintk(chunk_header, sizeof(chunk_header), "%x\r\n", str_len);
 
-	if (!net_nbuf_append(tx, strlen(chunk_header), chunk_header, timeout)) {
+	if (!net_pkt_append(tx, strlen(chunk_header), chunk_header, timeout)) {
 		return -ENOMEM;
 	}
 
 	if (str_len > 0) {
-		if (!net_nbuf_append(tx, str_len, (uint8_t *)str, timeout)) {
+		if (!net_pkt_append(tx, str_len, (u8_t *)str, timeout)) {
 			return -ENOMEM;
 		}
 	}
 
-	if (!net_nbuf_append(tx, strlen(rn), rn, timeout)) {
+	if (!net_pkt_append(tx, strlen(rn), rn, timeout)) {
 		return -ENOMEM;
 	}
 
@@ -71,12 +71,12 @@ static int http_add_chunk(struct net_buf *tx, int32_t timeout, const char *str)
 int http_response(struct http_server_ctx *ctx, const char *http_header,
 		  const char *html_payload)
 {
-	struct net_buf *tx;
+	struct net_pkt *tx;
 	int rc = -EINVAL;
 
-	tx = net_nbuf_get_tx(ctx->net_ctx, ctx->timeout);
+	tx = net_pkt_get_tx(ctx->net_ctx, ctx->timeout);
 	if (!tx) {
-		goto exit_routine;
+		return rc;
 	}
 
 	rc = http_add_header(tx, ctx->timeout, http_header);
@@ -105,8 +105,7 @@ int http_response(struct http_server_ctx *ctx, const char *http_header,
 	tx = NULL;
 
 exit_routine:
-	/* unref can handle NULL buffers, so we are covered */
-	net_nbuf_unref(tx);
+	net_pkt_unref(tx);
 
 	return rc;
 }

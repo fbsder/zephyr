@@ -47,7 +47,6 @@
 #include <limits.h>
 #include <zephyr/types.h>
 
-#include <net/nbuf.h>
 #include <net/net_core.h>
 #include <net/net_stats.h>
 
@@ -73,14 +72,14 @@
 #define MRHOF_ETX_SCALE   100
 #define MRHOF_ETX_ALPHA   90
 
-static uint16_t net_rpl_mrhof_get(void)
+static u16_t net_rpl_mrhof_get(void)
 {
 	return 1;
 }
 
-uint16_t net_rpl_of_get(void) ALIAS_OF(net_rpl_mrhof_get);
+u16_t net_rpl_of_get(void) ALIAS_OF(net_rpl_mrhof_get);
 
-static bool net_rpl_mrhof_find(uint16_t ocp)
+static bool net_rpl_mrhof_find(u16_t ocp)
 {
 	if (ocp != 1) {
 		return false;
@@ -89,7 +88,7 @@ static bool net_rpl_mrhof_find(uint16_t ocp)
 	return true;
 }
 
-bool net_rpl_of_find(uint16_t ocp) ALIAS_OF(net_rpl_mrhof_find);
+bool net_rpl_of_find(u16_t ocp) ALIAS_OF(net_rpl_mrhof_find);
 
 static void net_rpl_mrhof_reset(struct net_rpl_dag *dag)
 {
@@ -102,11 +101,11 @@ static int net_rpl_mrhof_neighbor_link_cb(struct net_if *iface,
 					  struct net_rpl_parent *parent,
 					  int status, int numtx)
 {
-	uint16_t packet_etx = numtx * NET_RPL_MC_ETX_DIVISOR;
-	uint16_t recorded_etx = 0;
+	u16_t packet_etx = numtx * NET_RPL_MC_ETX_DIVISOR;
+	u16_t recorded_etx = 0;
 	struct net_nbr *nbr = NULL;
 	struct net_nbr *ipv6_nbr;
-	uint16_t new_etx;
+	u16_t new_etx;
 
 	nbr = net_rpl_get_nbr(parent);
 	if (!nbr) {
@@ -138,8 +137,8 @@ static int net_rpl_mrhof_neighbor_link_cb(struct net_if *iface,
 			/* We already have a valid link metric,
 			 * use weighted moving average to update it
 			 */
-			new_etx = ((uint32_t)recorded_etx * MRHOF_ETX_ALPHA +
-				   (uint32_t)packet_etx *
+			new_etx = ((u32_t)recorded_etx * MRHOF_ETX_ALPHA +
+				   (u32_t)packet_etx *
 				   (MRHOF_ETX_SCALE - MRHOF_ETX_ALPHA)) /
 				MRHOF_ETX_SCALE;
 		} else {
@@ -169,7 +168,7 @@ int net_rpl_of_neighbor_link_cb(struct net_if *iface,
 				int status, int numtx)
 	ALIAS_OF(net_rpl_mrhof_neighbor_link_cb);
 
-static uint16_t calculate_path_metric(struct net_rpl_parent *parent)
+static u16_t calculate_path_metric(struct net_rpl_parent *parent)
 {
 	struct net_nbr *nbr;
 
@@ -204,9 +203,9 @@ net_rpl_mrhof_best_parent(struct net_if *iface,
 			  struct net_rpl_parent *parent2)
 {
 	struct net_rpl_dag *dag;
-	uint16_t min_diff;
-	uint16_t p1_metric;
-	uint16_t p2_metric;
+	u16_t min_diff;
+	u16_t p1_metric;
+	u16_t p2_metric;
 
 	dag = parent1->dag; /* Both parents are in the same DAG. */
 
@@ -259,11 +258,11 @@ struct net_rpl_dag *net_rpl_of_best_dag(struct net_rpl_dag *dag1,
 					struct net_rpl_dag *dag2)
 	ALIAS_OF(net_rpl_mrhof_best_dag);
 
-static uint16_t net_rpl_mrhof_calc_rank(struct net_rpl_parent *parent,
-					uint16_t base_rank)
+static u16_t net_rpl_mrhof_calc_rank(struct net_rpl_parent *parent,
+					u16_t base_rank)
 {
-	uint16_t new_rank;
-	uint16_t rank_increase;
+	u16_t new_rank;
+	u16_t rank_increase;
 	struct net_nbr *nbr;
 
 	nbr = net_rpl_get_nbr(parent);
@@ -294,8 +293,8 @@ static uint16_t net_rpl_mrhof_calc_rank(struct net_rpl_parent *parent,
 	return new_rank;
 }
 
-uint16_t net_rpl_of_calc_rank(struct net_rpl_parent *parent,
-			      uint16_t base_rank)
+u16_t net_rpl_of_calc_rank(struct net_rpl_parent *parent,
+			      u16_t base_rank)
 	ALIAS_OF(net_rpl_mrhof_calc_rank);
 
 static int net_rpl_mrhof_update_mc(struct net_rpl_instance *instance)
@@ -304,11 +303,11 @@ static int net_rpl_mrhof_update_mc(struct net_rpl_instance *instance)
 	instance->mc.type = NET_RPL_MC_NONE;
 	return 0;
 #else
-	uint16_t path_metric;
+	u16_t path_metric;
 	struct net_rpl_dag *dag;
 
 #if defined(CONFIG_NET_RPL_MC_ENERGY)
-	uint8_t type;
+	u8_t type;
 
 	instance->mc.type = NET_RPL_MC_ENERGY;
 #else

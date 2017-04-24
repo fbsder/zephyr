@@ -12,6 +12,7 @@
 #if !defined(_ASMLANGUAGE)
 #include <atomic.h>
 #include <misc/dlist.h>
+#include <string.h>
 #endif
 
 /*
@@ -71,10 +72,10 @@ struct _thread_base {
 	sys_dnode_t k_q_node;
 
 	/* user facing 'thread options'; values defined in include/kernel.h */
-	uint8_t user_options;
+	u8_t user_options;
 
 	/* thread state */
-	uint8_t thread_state;
+	u8_t thread_state;
 
 	/*
 	 * scheduler lock count and thread priority
@@ -93,14 +94,14 @@ struct _thread_base {
 	union {
 		struct {
 #if __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
-			uint8_t sched_locked;
-			int8_t prio;
+			u8_t sched_locked;
+			s8_t prio;
 #else /* LITTLE and PDP */
-			int8_t prio;
-			uint8_t sched_locked;
+			s8_t prio;
+			u8_t sched_locked;
 #endif
 		};
-		uint16_t preempt;
+		u16_t preempt;
 	};
 
 	/* data returned by APIs */
@@ -159,7 +160,7 @@ struct _ready_q {
 	struct k_thread *cache;
 
 	/* bitmap of priorities that contain at least one ready thread */
-	uint32_t prio_bmap[K_NUM_PRIO_BITMAPS];
+	u32_t prio_bmap[K_NUM_PRIO_BITMAPS];
 
 	/* ready queues, one per priority */
 	sys_dlist_t q[K_NUM_PRIORITIES];
@@ -170,7 +171,7 @@ typedef struct _ready_q _ready_q_t;
 struct _kernel {
 
 	/* nested interrupt count */
-	uint32_t nested;
+	u32_t nested;
 
 	/* interrupt stack pointer base */
 	char *irq_stack;
@@ -184,7 +185,7 @@ struct _kernel {
 #endif
 
 #ifdef CONFIG_SYS_POWER_MANAGEMENT
-	int32_t idle; /* Number of ticks for kernel idling */
+	s32_t idle; /* Number of ticks for kernel idling */
 #endif
 
 	/*
@@ -236,8 +237,55 @@ _set_thread_return_value_with_data(struct k_thread *thread,
 }
 
 extern void _init_thread_base(struct _thread_base *thread_base,
-			      int priority, uint32_t initial_state,
+			      int priority, u32_t initial_state,
 			      unsigned int options);
+
+static ALWAYS_INLINE struct k_thread *_new_thread_init(char *pStack,
+						       size_t stackSize,
+						       int prio,
+						       unsigned int options)
+{
+	struct k_thread *thread;
+
+#ifdef CONFIG_INIT_STACKS
+	memset(pStack, 0xaa, stackSize);
+#endif
+
+	/* Initialize various struct k_thread members */
+	thread = (struct k_thread *)pStack;
+
+	_init_thread_base(&thread->base, prio, _THREAD_PRESTART, options);
+
+	/* static threads overwrite it afterwards with real value */
+	thread->init_data = NULL;
+	thread->fn_abort = NULL;
+
+#ifdef CONFIG_THREAD_CUSTOM_DATA
+	/* Initialize custom data field (value is opaque to kernel) */
+	thread->custom_data = NULL;
+#endif
+
+	return thread;
+}
+
+#if defined(CONFIG_THREAD_MONITOR)
+/*
+ * Add a thread to the kernel's list of active threads.
+ */
+static ALWAYS_INLINE void thread_monitor_init(struct k_thread *thread)
+{
+	unsigned int key;
+
+	key = irq_lock();
+	thread->next_thread = _kernel.threads;
+	_kernel.threads = thread;
+	irq_unlock(key);
+}
+#else
+#define thread_monitor_init(thread)		\
+	do {/* do nothing */			\
+	} while ((0))
+#endif /* CONFIG_THREAD_MONITOR */
 
 #endif /* _ASMLANGUAGE */
 

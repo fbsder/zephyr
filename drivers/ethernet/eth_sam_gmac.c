@@ -28,7 +28,7 @@
 #include <misc/util.h>
 #include <errno.h>
 #include <stdbool.h>
-#include <net/nbuf.h>
+#include <net/net_pkt.h>
 #include <net/net_if.h>
 #include <soc.h>
 #include "phy_sam_gmac.h"
@@ -38,28 +38,28 @@
  * Verify Kconfig configuration
  */
 
-#if CONFIG_NET_NBUF_DATA_SIZE * CONFIG_ETH_SAM_GMAC_NBUF_RX_DATA_COUNT \
+#if CONFIG_NET_BUF_DATA_SIZE * CONFIG_ETH_SAM_GMAC_BUF_RX_COUNT \
 	< GMAC_FRAME_SIZE_MAX
-#error CONFIG_NET_NBUF_DATA_SIZE * CONFIG_ETH_SAM_GMAC_NBUF_RX_DATA_COUNT is \
+#error CONFIG_NET_BUF_DATA_SIZE * CONFIG_ETH_SAM_GMAC_BUF_RX_COUNT is \
 	not large enough to hold a full frame
 #endif
 
-#if CONFIG_NET_NBUF_DATA_SIZE * (CONFIG_NET_NBUF_RX_DATA_COUNT - \
-	CONFIG_ETH_SAM_GMAC_NBUF_RX_DATA_COUNT) < GMAC_FRAME_SIZE_MAX
-#error Remaining free RX data buffers (CONFIG_NET_NBUF_RX_DATA_COUNT -
-	CONFIG_ETH_SAM_GMAC_NBUF_RX_DATA_COUNT) * CONFIG_NET_NBUF_DATA_SIZE
+#if CONFIG_NET_BUF_DATA_SIZE * (CONFIG_NET_BUF_RX_COUNT - \
+	CONFIG_ETH_SAM_GMAC_BUF_RX_COUNT) < GMAC_FRAME_SIZE_MAX
+#error Remaining free RX data buffers (CONFIG_NET_BUF_RX_COUNT -
+	CONFIG_ETH_SAM_GMAC_BUF_RX_COUNT) * CONFIG_NET_BUF_DATA_SIZE
 	are not large enough to hold a full frame
 #endif
 
-#if CONFIG_NET_NBUF_DATA_SIZE * CONFIG_NET_NBUF_TX_DATA_COUNT \
+#if CONFIG_NET_BUF_DATA_SIZE * CONFIG_NET_BUF_TX_COUNT \
 	< GMAC_FRAME_SIZE_MAX
 #pragma message "Maximum frame size GMAC driver is able to transmit " \
-	"CONFIG_NET_NBUF_DATA_SIZE * CONFIG_NET_NBUF_TX_DATA_COUNT is smaller" \
+	"CONFIG_NET_BUF_DATA_SIZE * CONFIG_NET_BUF_TX_COUNT is smaller" \
 	"than a full Ethernet frame"
 #endif
 
-#if CONFIG_NET_NBUF_DATA_SIZE & 0x3F
-#pragma message "CONFIG_NET_NBUF_DATA_SIZE should be a multiple of 64 bytes " \
+#if CONFIG_NET_BUF_DATA_SIZE & 0x3F
+#pragma message "CONFIG_NET_BUF_DATA_SIZE should be a multiple of 64 bytes " \
 	"due to the granularity of RX DMA"
 #endif
 
@@ -77,7 +77,7 @@ static struct gmac_desc tx_desc_que12[PRIORITY_QUEUE_DESC_COUNT]
 /* RX buffer accounting list */
 static struct net_buf *rx_buf_list_que0[MAIN_QUEUE_RX_DESC_COUNT];
 /* TX frames accounting list */
-static struct net_buf *tx_frame_list_que0[CONFIG_NET_NBUF_TX_COUNT + 1];
+static struct net_pkt *tx_frame_list_que0[CONFIG_NET_PKT_TX_COUNT + 1];
 
 #define MODULO_INC(val, max) {val = (++val < max) ? val : 0; }
 
@@ -93,9 +93,9 @@ static void ring_buf_reset(struct ring_buf *rb)
 /*
  * Get one 32 bit item from the ring buffer
  */
-static uint32_t ring_buf_get(struct ring_buf *rb)
+static u32_t ring_buf_get(struct ring_buf *rb)
 {
-	uint32_t val;
+	u32_t val;
 
 	__ASSERT(rb->tail != rb->head,
 		 "retrieving data from empty ring buffer");
@@ -109,7 +109,7 @@ static uint32_t ring_buf_get(struct ring_buf *rb)
 /*
  * Put one 32 bit item into the ring buffer
  */
-static void ring_buf_put(struct ring_buf *rb, uint32_t val)
+static void ring_buf_put(struct ring_buf *rb, u32_t val)
 {
 	rb->buf[rb->head] = val;
 	MODULO_INC(rb->head, rb->len);
@@ -121,12 +121,12 @@ static void ring_buf_put(struct ring_buf *rb, uint32_t val)
 /*
  * Free pre-reserved RX buffers
  */
-static void free_rx_bufs(struct ring_buf *rx_nbuf_list)
+static void free_rx_bufs(struct ring_buf *rx_pkt_list)
 {
 	struct net_buf *buf;
 
-	for (int i = 0; i < rx_nbuf_list->len; i++) {
-		buf = (struct net_buf *)rx_nbuf_list->buf;
+	for (int i = 0; i < rx_pkt_list->len; i++) {
+		buf = (struct net_buf *)rx_pkt_list->buf;
 		if (buf) {
 			net_buf_unref(buf);
 		}
@@ -136,8 +136,8 @@ static void free_rx_bufs(struct ring_buf *rx_nbuf_list)
 /*
  * Set MAC Address for frame filtering logic
  */
-static void mac_addr_set(Gmac *gmac, uint8_t index,
-				 uint8_t mac_addr[6])
+static void mac_addr_set(Gmac *gmac, u8_t index,
+				 u8_t mac_addr[6])
 {
 	__ASSERT(index < 4, "index has to be in the range 0..3");
 
@@ -155,32 +155,32 @@ static void mac_addr_set(Gmac *gmac, uint8_t index,
 static int rx_descriptors_init(Gmac *gmac, struct gmac_queue *queue)
 {
 	struct gmac_desc_list *rx_desc_list = &queue->rx_desc_list;
-	struct ring_buf *rx_nbuf_list = &queue->rx_nbuf_list;
+	struct ring_buf *rx_pkt_list = &queue->rx_pkt_list;
 	struct net_buf *rx_buf;
-	uint8_t *rx_buf_addr;
+	u8_t *rx_buf_addr;
 
-	__ASSERT_NO_MSG(rx_nbuf_list->buf);
+	__ASSERT_NO_MSG(rx_pkt_list->buf);
 
 	rx_desc_list->tail = 0;
-	rx_nbuf_list->tail = 0;
+	rx_pkt_list->tail = 0;
 
 	for (int i = 0; i < rx_desc_list->len; i++) {
-		rx_buf = net_nbuf_get_reserve_rx_data(0, K_NO_WAIT);
+		rx_buf = net_pkt_get_reserve_rx_data(0, K_NO_WAIT);
 		if (rx_buf == NULL) {
-			free_rx_bufs(rx_nbuf_list);
+			free_rx_bufs(rx_pkt_list);
 			SYS_LOG_ERR("Failed to reserve data net buffers");
 			return -ENOBUFS;
 		}
 
-		rx_nbuf_list->buf[i] = (uint32_t)rx_buf;
+		rx_pkt_list->buf[i] = (u32_t)rx_buf;
 
 		rx_buf_addr = rx_buf->data;
-		__ASSERT(!((uint32_t)rx_buf_addr & ~GMAC_RXW0_ADDR),
+		__ASSERT(!((u32_t)rx_buf_addr & ~GMAC_RXW0_ADDR),
 			 "Misaligned RX buffer address");
-		__ASSERT(rx_buf->size == CONFIG_NET_NBUF_DATA_SIZE,
+		__ASSERT(rx_buf->size == CONFIG_NET_BUF_DATA_SIZE,
 			 "Incorrect length of RX data buffer");
 		/* Give ownership to GMAC and remove the wrap bit */
-		rx_desc_list->buf[i].w0 = (uint32_t)rx_buf_addr & GMAC_RXW0_ADDR;
+		rx_desc_list->buf[i].w0 = (u32_t)rx_buf_addr & GMAC_RXW0_ADDR;
 		rx_desc_list->buf[i].w1 = 0;
 	}
 
@@ -219,7 +219,7 @@ static void tx_completed(Gmac *gmac, struct gmac_queue *queue)
 {
 	struct gmac_desc_list *tx_desc_list = &queue->tx_desc_list;
 	struct gmac_desc *tx_desc;
-	struct net_buf *buf;
+	struct net_pkt *pkt;
 
 	__ASSERT(tx_desc_list->buf[tx_desc_list->tail].w1 & GMAC_TXW1_USED,
 		 "first buffer of a frame is not marked as own by GMAC");
@@ -232,9 +232,9 @@ static void tx_completed(Gmac *gmac, struct gmac_queue *queue)
 
 		if (tx_desc->w1 & GMAC_TXW1_LASTBUFFER) {
 			/* Release net buffer to the buffer pool */
-			buf = UINT_TO_POINTER(ring_buf_get(&queue->tx_frames));
-			net_buf_unref(buf);
-			SYS_LOG_DBG("Dropping buf %p", buf);
+			pkt = UINT_TO_POINTER(ring_buf_get(&queue->tx_frames));
+			net_pkt_unref(pkt);
+			SYS_LOG_DBG("Dropping pkt %p", pkt);
 
 			break;
 		}
@@ -246,7 +246,7 @@ static void tx_completed(Gmac *gmac, struct gmac_queue *queue)
  */
 static void tx_error_handler(Gmac *gmac, struct gmac_queue *queue)
 {
-	struct net_buf *buf;
+	struct net_pkt *pkt;
 	struct ring_buf *tx_frames = &queue->tx_frames;
 
 	queue->err_tx_flushed_count++;
@@ -254,12 +254,12 @@ static void tx_error_handler(Gmac *gmac, struct gmac_queue *queue)
 	/* Stop transmission, clean transmit pipeline and control registers */
 	gmac->GMAC_NCR &= ~GMAC_NCR_TXEN;
 
-	/* Free all nbuf resources in the TX path */
+	/* Free all pkt resources in the TX path */
 	while (tx_frames->tail != tx_frames->head) {
 		/* Release net buffer to the buffer pool */
-		buf = UINT_TO_POINTER(tx_frames->buf[tx_frames->tail]);
-		net_buf_unref(buf);
-		SYS_LOG_DBG("Dropping buf %p", buf);
+		pkt = UINT_TO_POINTER(tx_frames->buf[tx_frames->tail]);
+		net_pkt_unref(pkt);
+		SYS_LOG_DBG("Dropping pkt %p", pkt);
 		MODULO_INC(tx_frames->tail, tx_frames->len);
 	}
 
@@ -285,7 +285,7 @@ static void rx_error_handler(Gmac *gmac, struct gmac_queue *queue)
 	gmac->GMAC_NCR &= ~GMAC_NCR_RXEN;
 
 	queue->rx_desc_list.tail = 0;
-	queue->rx_nbuf_list.tail = 0;
+	queue->rx_pkt_list.tail = 0;
 
 	for (int i = 0; i < queue->rx_desc_list.len; i++) {
 		queue->rx_desc_list.buf[i].w1 = 0;
@@ -293,7 +293,7 @@ static void rx_error_handler(Gmac *gmac, struct gmac_queue *queue)
 	}
 
 	/* Set Receive Buffer Queue Pointer Register */
-	gmac->GMAC_RBQB = (uint32_t)queue->rx_desc_list.buf;
+	gmac->GMAC_RBQB = (u32_t)queue->rx_desc_list.buf;
 
 	/* Restart reception */
 	gmac->GMAC_NCR |=  GMAC_NCR_RXEN;
@@ -304,9 +304,9 @@ static void rx_error_handler(Gmac *gmac, struct gmac_queue *queue)
  *
  * According to 802.3 MDC should be less then 2.5 MHz.
  */
-static int get_mck_clock_divisor(uint32_t mck)
+static int get_mck_clock_divisor(u32_t mck)
 {
-	uint32_t mck_divisor;
+	u32_t mck_divisor;
 
 	if (mck <= 20000000) {
 		mck_divisor = GMAC_NCFGR_CLK_MCK_8;
@@ -328,7 +328,7 @@ static int get_mck_clock_divisor(uint32_t mck)
 	return mck_divisor;
 }
 
-static int gmac_init(Gmac *gmac, uint32_t gmac_ncfgr_val)
+static int gmac_init(Gmac *gmac, u32_t gmac_ncfgr_val)
 {
 	int mck_divisor;
 
@@ -364,9 +364,9 @@ static int gmac_init(Gmac *gmac, uint32_t gmac_ncfgr_val)
 	return 0;
 }
 
-static void link_configure(Gmac *gmac, uint32_t flags)
+static void link_configure(Gmac *gmac, u32_t flags)
 {
-	uint32_t val;
+	u32_t val;
 
 	gmac->GMAC_NCR &= ~(GMAC_NCR_RXEN | GMAC_NCR_TXEN);
 
@@ -387,9 +387,9 @@ static int queue_init(Gmac *gmac, struct gmac_queue *queue)
 
 	__ASSERT_NO_MSG(queue->rx_desc_list.len > 0);
 	__ASSERT_NO_MSG(queue->tx_desc_list.len > 0);
-	__ASSERT(!((uint32_t)queue->rx_desc_list.buf & ~GMAC_RBQB_ADDR_Msk),
+	__ASSERT(!((u32_t)queue->rx_desc_list.buf & ~GMAC_RBQB_ADDR_Msk),
 		 "RX descriptors have to be word aligned");
-	__ASSERT(!((uint32_t)queue->tx_desc_list.buf & ~GMAC_TBQB_ADDR_Msk),
+	__ASSERT(!((u32_t)queue->tx_desc_list.buf & ~GMAC_TBQB_ADDR_Msk),
 		 "TX descriptors have to be word aligned");
 
 	/* Setup descriptor lists */
@@ -408,14 +408,14 @@ static int queue_init(Gmac *gmac, struct gmac_queue *queue)
 		   queue->tx_desc_list.len - 1);
 
 	/* Set Receive Buffer Queue Pointer Register */
-	gmac->GMAC_RBQB = (uint32_t)queue->rx_desc_list.buf;
+	gmac->GMAC_RBQB = (u32_t)queue->rx_desc_list.buf;
 	/* Set Transmit Buffer Queue Pointer Register */
-	gmac->GMAC_TBQB = (uint32_t)queue->tx_desc_list.buf;
+	gmac->GMAC_TBQB = (u32_t)queue->tx_desc_list.buf;
 
 	/* Configure GMAC DMA transfer */
 	gmac->GMAC_DCFGR =
 		  /* Receive Buffer Size (defined in multiples of 64 bytes) */
-		  GMAC_DCFGR_DRBS(CONFIG_NET_NBUF_DATA_SIZE >> 6)
+		  GMAC_DCFGR_DRBS(CONFIG_NET_BUF_DATA_SIZE >> 6)
 		  /* 4 kB Receiver Packet Buffer Memory Size */
 		| GMAC_DCFGR_RXBMS_FULL
 		  /* 4 kB Transmitter Packet Buffer Memory Size */
@@ -442,9 +442,9 @@ static int priority_queue_init_as_idle(Gmac *gmac, struct gmac_queue *queue)
 	struct gmac_desc_list *rx_desc_list = &queue->rx_desc_list;
 	struct gmac_desc_list *tx_desc_list = &queue->tx_desc_list;
 
-	__ASSERT(!((uint32_t)rx_desc_list->buf & ~GMAC_RBQB_ADDR_Msk),
+	__ASSERT(!((u32_t)rx_desc_list->buf & ~GMAC_RBQB_ADDR_Msk),
 		 "RX descriptors have to be word aligned");
-	__ASSERT(!((uint32_t)tx_desc_list->buf & ~GMAC_TBQB_ADDR_Msk),
+	__ASSERT(!((u32_t)tx_desc_list->buf & ~GMAC_TBQB_ADDR_Msk),
 		 "TX descriptors have to be word aligned");
 	__ASSERT((rx_desc_list->len == 1) && (tx_desc_list->len == 1),
 		 "Priority queues are currently not supported, descriptor "
@@ -460,9 +460,9 @@ static int priority_queue_init_as_idle(Gmac *gmac, struct gmac_queue *queue)
 	tx_desc_list->buf[0].w1 = GMAC_TXW1_USED | GMAC_TXW1_WRAP;
 
 	/* Set Receive Buffer Queue Pointer Register */
-	gmac->GMAC_RBQBAPQ[queue->que_idx - 1] = (uint32_t)rx_desc_list->buf;
+	gmac->GMAC_RBQBAPQ[queue->que_idx - 1] = (u32_t)rx_desc_list->buf;
 	/* Set Transmit Buffer Queue Pointer Register */
-	gmac->GMAC_TBQBAPQ[queue->que_idx - 1] = (uint32_t)tx_desc_list->buf;
+	gmac->GMAC_TBQBAPQ[queue->que_idx - 1] = (u32_t)tx_desc_list->buf;
 
 	return 0;
 }
@@ -471,16 +471,15 @@ static struct net_buf *frame_get(struct gmac_queue *queue)
 {
 	struct gmac_desc_list *rx_desc_list = &queue->rx_desc_list;
 	struct gmac_desc *rx_desc;
-	struct ring_buf *rx_nbuf_list = &queue->rx_nbuf_list;
-	struct net_buf *rx_frame;
+	struct ring_buf *rx_pkt_list = &queue->rx_pkt_list;
+	struct net_pkt *rx_frame;
 	bool frame_is_complete;
-	struct net_buf *prev_frag;
 	struct net_buf *frag;
 	struct net_buf *new_frag;
-	uint8_t *frag_data;
-	uint32_t frag_len;
-	uint32_t frame_len = 0;
-	uint16_t tail;
+	u8_t *frag_data;
+	u32_t frag_len;
+	u32_t frame_len = 0;
+	u16_t tail;
 
 	/* Check if there exists a complete frame in RX descriptor list */
 	tail = rx_desc_list->tail;
@@ -498,10 +497,9 @@ static struct net_buf *frame_get(struct gmac_queue *queue)
 		return NULL;
 	}
 
-	rx_frame = net_nbuf_get_reserve_rx(0, K_NO_WAIT);
+	rx_frame = net_pkt_get_reserve_rx(0, K_NO_WAIT);
 
 	/* Process a frame */
-	prev_frag = rx_frame;
 	tail = rx_desc_list->tail;
 	rx_desc = &rx_desc_list->buf[tail];
 	frame_is_complete = false;
@@ -518,15 +516,15 @@ static struct net_buf *frame_get(struct gmac_queue *queue)
 	 * again.
 	 */
 	while ((rx_desc->w0 & GMAC_RXW0_OWNERSHIP) && !frame_is_complete) {
-		frag = (struct net_buf *)rx_nbuf_list->buf[tail];
-		frag_data = (uint8_t *)(rx_desc->w0 & GMAC_RXW0_ADDR);
+		frag = (struct net_buf *)rx_pkt_list->buf[tail];
+		frag_data = (u8_t *)(rx_desc->w0 & GMAC_RXW0_ADDR);
 		__ASSERT(frag->data == frag_data,
 			 "RX descriptor and buffer list desynchronized");
 		frame_is_complete = (bool)(rx_desc->w1 & GMAC_RXW1_EOF);
 		if (frame_is_complete) {
 			frag_len = (rx_desc->w1 & GMAC_TXW1_LEN) - frame_len;
 		} else {
-			frag_len = CONFIG_NET_NBUF_DATA_SIZE;
+			frag_len = CONFIG_NET_BUF_DATA_SIZE;
 		}
 
 		frame_len += frag_len;
@@ -537,17 +535,16 @@ static struct net_buf *frame_get(struct gmac_queue *queue)
 			DCACHE_INVALIDATE(frag_data, frag_len);
 
 			/* Get a new data net buffer from the buffer pool */
-			new_frag = net_nbuf_get_frag(rx_frame, K_NO_WAIT);
+			new_frag = net_pkt_get_frag(rx_frame, K_NO_WAIT);
 			if (new_frag == NULL) {
 				queue->err_rx_frames_dropped++;
-				net_buf_unref(rx_frame);
+				net_pkt_unref(rx_frame);
 				rx_frame = NULL;
 			} else {
 				net_buf_add(frag, frag_len);
-				net_buf_frag_insert(prev_frag, frag);
-				prev_frag = frag;
+				net_pkt_frag_insert(rx_frame, frag);
 				frag = new_frag;
-				rx_nbuf_list->buf[tail] = (uint32_t)frag;
+				rx_pkt_list->buf[tail] = (u32_t)frag;
 			}
 		}
 
@@ -559,7 +556,7 @@ static struct net_buf *frame_get(struct gmac_queue *queue)
 		__DMB();  /* data memory barrier */
 		/* Update buffer descriptor address word */
 		rx_desc->w0 =
-			  ((uint32_t)frag->data & GMAC_RXW0_ADDR)
+			  ((u32_t)frag->data & GMAC_RXW0_ADDR)
 			| (tail == rx_desc_list->len-1 ? GMAC_RXW0_WRAP : 0);
 
 		MODULO_INC(tail, rx_desc_list->len);
@@ -577,7 +574,7 @@ static void eth_rx(struct gmac_queue *queue)
 {
 	struct eth_sam_dev_data *dev_data =
 		CONTAINER_OF(queue, struct eth_sam_dev_data, queue_list);
-	struct net_buf *rx_frame;
+	struct net_pkt *rx_frame;
 
 	/* More than one frame could have been received by GMAC, get all
 	 * complete frames stored in the GMAC RX descriptor list.
@@ -587,14 +584,14 @@ static void eth_rx(struct gmac_queue *queue)
 		SYS_LOG_DBG("ETH rx");
 
 		if (net_recv_data(dev_data->iface, rx_frame) < 0) {
-			net_nbuf_unref(rx_frame);
+			net_pkt_unref(rx_frame);
 		}
 
 		rx_frame = frame_get(queue);
 	}
 }
 
-static int eth_tx(struct net_if *iface, struct net_buf *buf)
+static int eth_tx(struct net_if *iface, struct net_pkt *pkt)
 {
 	struct device *const dev = net_if_get_device(iface);
 	const struct eth_sam_dev_cfg *const cfg = DEV_CFG(dev);
@@ -604,13 +601,13 @@ static int eth_tx(struct net_if *iface, struct net_buf *buf)
 	struct gmac_desc_list *tx_desc_list = &queue->tx_desc_list;
 	struct gmac_desc *tx_desc;
 	struct net_buf *frag;
-	uint8_t *frag_data;
-	uint16_t frag_len;
-	uint32_t err_tx_flushed_count_at_entry = queue->err_tx_flushed_count;
+	u8_t *frag_data;
+	u16_t frag_len;
+	u32_t err_tx_flushed_count_at_entry = queue->err_tx_flushed_count;
 	unsigned int key;
 
-	__ASSERT(buf, "buf pointer is NULL");
-	__ASSERT(buf->frags, "Frame data missing");
+	__ASSERT(pkt, "buf pointer is NULL");
+	__ASSERT(pkt->frags, "Frame data missing");
 
 	SYS_LOG_DBG("ETH tx");
 
@@ -618,10 +615,9 @@ static int eth_tx(struct net_if *iface, struct net_buf *buf)
 	 * in our case) header. Modify the data pointer to account for more data
 	 * in the beginning of the buffer.
 	 */
-	net_buf_push(buf->frags, net_nbuf_ll_reserve(buf));
+	net_buf_push(pkt->frags, net_pkt_ll_reserve(pkt));
 
-	frag = buf->frags;
-
+	frag = pkt->frags;
 	while (frag) {
 		frag_data = frag->data;
 		frag_len = frag->len;
@@ -646,7 +642,7 @@ static int eth_tx(struct net_if *iface, struct net_buf *buf)
 		tx_desc = &tx_desc_list->buf[tx_desc_list->head];
 
 		/* Update buffer descriptor address word */
-		tx_desc->w0 = (uint32_t)frag_data;
+		tx_desc->w0 = (u32_t)frag_data;
 		/* Guarantee that address word is written before the status
 		 * word to avoid race condition.
 		 */
@@ -683,7 +679,7 @@ static int eth_tx(struct net_if *iface, struct net_buf *buf)
 	tx_desc->w1 |= GMAC_TXW1_USED;
 
 	/* Account for a sent frame */
-	ring_buf_put(&queue->tx_frames, POINTER_TO_UINT(buf));
+	ring_buf_put(&queue->tx_frames, POINTER_TO_UINT(pkt));
 
 	irq_unlock(key);
 
@@ -700,7 +696,7 @@ static void queue0_isr(void *arg)
 	struct eth_sam_dev_data *const dev_data = DEV_DATA(dev);
 	Gmac *gmac = cfg->regs;
 	struct gmac_queue *queue = &dev_data->queue_list[0];
-	uint32_t isr;
+	u32_t isr;
 
 	/* Interrupt Status Register is cleared on read */
 	isr = gmac->GMAC_ISR;
@@ -751,8 +747,8 @@ static void eth0_iface_init(struct net_if *iface)
 	struct device *const dev = net_if_get_device(iface);
 	struct eth_sam_dev_data *const dev_data = DEV_DATA(dev);
 	const struct eth_sam_dev_cfg *const cfg = DEV_CFG(dev);
-	uint32_t gmac_ncfgr_val;
-	uint32_t link_status;
+	u32_t gmac_ncfgr_val;
+	u32_t link_status;
 	int result;
 
 	dev_data->iface = iface;
@@ -848,12 +844,12 @@ static struct eth_sam_dev_data eth0_data = {
 				.buf = tx_desc_que0,
 				.len = ARRAY_SIZE(tx_desc_que0),
 			},
-			.rx_nbuf_list = {
-				.buf = (uint32_t *)rx_buf_list_que0,
+			.rx_pkt_list = {
+				.buf = (u32_t *)rx_buf_list_que0,
 				.len = ARRAY_SIZE(rx_buf_list_que0),
 			},
 			.tx_frames = {
-				.buf = (uint32_t *)tx_frame_list_que0,
+				.buf = (u32_t *)tx_frame_list_que0,
 				.len = ARRAY_SIZE(tx_frame_list_que0),
 			},
 		}, {
