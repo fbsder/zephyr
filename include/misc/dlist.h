@@ -127,7 +127,8 @@ typedef struct _dnode sys_dnode_t;
  * @param __n The field name of sys_dnode_t within the container struct
  */
 #define SYS_DLIST_PEEK_NEXT_CONTAINER(__dl, __cn, __n) \
-	SYS_DLIST_CONTAINER(sys_dlist_peek_next(__dl, &(__cn->__n)), __cn, __n)
+	((__cn) ? SYS_DLIST_CONTAINER(sys_dlist_peek_next(__dl, &(__cn->__n)), \
+				      __cn, __n) : NULL)
 
 /**
  * @brief Provide the primitive to iterate on a list under a container
@@ -223,6 +224,19 @@ static inline int sys_dlist_is_tail(sys_dlist_t *list, sys_dnode_t *node)
 static inline int sys_dlist_is_empty(sys_dlist_t *list)
 {
 	return list->head == list;
+}
+
+/**
+ * @brief check if more than one node present
+ *
+ * @param list the doubly-linked list to operate on
+ *
+ * @return 1 if multiple nodes, 0 otherwise
+ */
+
+static inline int sys_dlist_has_multiple_nodes(sys_dlist_t *list)
+{
+	return list->head != list->tail;
 }
 
 /**

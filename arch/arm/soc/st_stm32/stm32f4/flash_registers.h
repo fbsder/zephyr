@@ -15,15 +15,6 @@
  * Chapter 3.4: Embedded Flash Memory
  */
 
-enum {
-	STM32F4X_FLASH_LATENCY_0 = 0x0,
-	STM32F4X_FLASH_LATENCY_1 = 0x1,
-	STM32F4X_FLASH_LATENCY_2 = 0x2,
-	STM32F4X_FLASH_LATENCY_3 = 0x3,
-	STM32F4X_FLASH_LATENCY_4 = 0x4,
-	STM32F4X_FLASH_LATENCY_5 = 0x5,
-};
-
 union __flash_acr {
 	u32_t val;
 	struct {
@@ -47,57 +38,5 @@ struct stm32f4x_flash {
 	volatile u32_t ctrl;
 	volatile u32_t optctrl;
 };
-
-/**
- * @brief setup embedded flash controller
- *
- * Configure flash access time latency depending on SYSCLK.
- */
-static inline void __setup_flash(void)
-{
-	volatile struct stm32f4x_flash *regs;
-	u32_t tmpreg = 0;
-
-	regs = (struct stm32f4x_flash *) FLASH_R_BASE;
-
-	if (CONFIG_SYS_CLOCK_HW_CYCLES_PER_SEC <= 30000000) {
-		regs->acr.bit.latency = STM32F4X_FLASH_LATENCY_0;
-	}
-#ifdef CONFIG_SOC_STM32F401XE
-	else if (CONFIG_SYS_CLOCK_HW_CYCLES_PER_SEC <= 60000000) {
-		regs->acr.bit.latency = STM32F4X_FLASH_LATENCY_1;
-	} else if (CONFIG_SYS_CLOCK_HW_CYCLES_PER_SEC <= 84000000) {
-		regs->acr.bit.latency = STM32F4X_FLASH_LATENCY_2;
-	}
-#elif CONFIG_SOC_STM32F411XE
-	else if (CONFIG_SYS_CLOCK_HW_CYCLES_PER_SEC <= 64000000) {
-		regs->acr.bit.latency = STM32F4X_FLASH_LATENCY_1;
-	} else if (CONFIG_SYS_CLOCK_HW_CYCLES_PER_SEC <= 90000000) {
-		regs->acr.bit.latency = STM32F4X_FLASH_LATENCY_2;
-	} else if (CONFIG_SYS_CLOCK_HW_CYCLES_PER_SEC <= 100000000) {
-		regs->acr.bit.latency = STM32F4X_FLASH_LATENCY_3;
-	}
-#elif defined(CONFIG_SOC_STM32F407XX) || defined(CONFIG_SOC_STM32F429XX)
-	else if (CONFIG_SYS_CLOCK_HW_CYCLES_PER_SEC <= 60000000) {
-		regs->acr.bit.latency = STM32F4X_FLASH_LATENCY_1;
-	} else if (CONFIG_SYS_CLOCK_HW_CYCLES_PER_SEC <= 90000000) {
-		regs->acr.bit.latency = STM32F4X_FLASH_LATENCY_2;
-	} else if (CONFIG_SYS_CLOCK_HW_CYCLES_PER_SEC <= 120000000) {
-		regs->acr.bit.latency = STM32F4X_FLASH_LATENCY_3;
-	} else if (CONFIG_SYS_CLOCK_HW_CYCLES_PER_SEC <= 150000000) {
-		regs->acr.bit.latency = STM32F4X_FLASH_LATENCY_4;
-	} else if (CONFIG_SYS_CLOCK_HW_CYCLES_PER_SEC <= 180000000) {
-		regs->acr.bit.latency = STM32F4X_FLASH_LATENCY_5;
-	}
-#else
-	else {
-		__ASSERT(0, "Flash latency not set");
-	}
-#endif
-
-	/* Make sure latency was set */
-	tmpreg = regs->acr.bit.latency;
-
-}
 
 #endif	/* _STM32F4X_FLASHREGISTERS_H_ */

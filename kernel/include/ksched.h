@@ -9,6 +9,10 @@
 
 #include <kernel_structs.h>
 
+#ifdef CONFIG_KERNEL_EVENT_LOGGER
+#include <logging/kernel_event_logger.h>
+#endif /* CONFIG_KERNEL_EVENT_LOGGER */
+
 extern k_tid_t const _main_thread;
 extern k_tid_t const _idle_thread;
 
@@ -21,6 +25,8 @@ extern void _pend_thread(struct k_thread *thread,
 extern void _pend_current_thread(_wait_q_t *wait_q, s32_t timeout);
 extern void _move_thread_to_end_of_prio_q(struct k_thread *thread);
 extern int __must_switch_threads(void);
+extern int _is_thread_time_slicing(struct k_thread *thread);
+extern void _update_time_slice_before_swap(void);
 #ifdef _NON_OPTIMIZED_TICKS_PER_SEC
 extern s32_t _ms_to_ticks(s32_t ms);
 #endif
@@ -36,6 +42,11 @@ static ALWAYS_INLINE struct k_thread *_get_next_ready_thread(void)
 static inline int _is_idle_thread(void *entry_point)
 {
 	return entry_point == idle;
+}
+
+static inline int _is_idle_thread_ptr(k_tid_t thread)
+{
+	return thread == _idle_thread;
 }
 
 #ifdef CONFIG_MULTITHREADING
@@ -336,6 +347,10 @@ static inline int _is_thread_ready(struct k_thread *thread)
 static inline void _mark_thread_as_pending(struct k_thread *thread)
 {
 	thread->base.thread_state |= _THREAD_PENDING;
+
+#ifdef CONFIG_KERNEL_EVENT_LOGGER_THREAD
+	_sys_k_event_logger_thread_pend(thread);
+#endif
 }
 
 /* mark a thread as not pending in its TCS */
@@ -406,6 +421,10 @@ static inline void _ready_thread(struct k_thread *thread)
 	if (_is_thread_ready(thread)) {
 		_add_thread_to_ready_q(thread);
 	}
+
+#ifdef CONFIG_KERNEL_EVENT_LOGGER_THREAD
+	_sys_k_event_logger_thread_ready(thread);
+#endif
 }
 
 /**
@@ -416,6 +435,10 @@ static inline void _ready_thread(struct k_thread *thread)
 static inline void _mark_thread_as_dead(struct k_thread *thread)
 {
 	thread->base.thread_state |= _THREAD_DEAD;
+
+#ifdef CONFIG_KERNEL_EVENT_LOGGER_THREAD
+	_sys_k_event_logger_thread_exit(thread);
+#endif
 }
 
 /*
