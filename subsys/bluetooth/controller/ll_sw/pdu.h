@@ -12,8 +12,9 @@
 
 /* PDU Sizes */
 #define PDU_EM_SIZE_MAX 3
-#define PDU_AC_SIZE_OVERHEAD 3
-#define PDU_AC_SIZE_MAX (37 + PDU_AC_SIZE_OVERHEAD)
+#define PDU_AC_SIZE_OVERHEAD 2
+#define PDU_AC_PAYLOAD_SIZE_MAX 37
+#define PDU_AC_SIZE_MAX (PDU_AC_PAYLOAD_SIZE_MAX + PDU_AC_SIZE_OVERHEAD)
 
 struct pdu_adv_payload_adv_ind {
 	u8_t addr[BDADDR_SIZE];
@@ -39,16 +40,16 @@ struct pdu_adv_payload_connect_ind {
 	u8_t init_addr[BDADDR_SIZE];
 	u8_t adv_addr[BDADDR_SIZE];
 	struct {
-		u8_t access_addr[4];
-		u8_t crc_init[3];
-		u8_t win_size;
+		u8_t  access_addr[4];
+		u8_t  crc_init[3];
+		u8_t  win_size;
 		u16_t win_offset;
 		u16_t interval;
 		u16_t latency;
 		u16_t timeout;
-		u8_t chan_map[5];
-		u8_t hop:5;
-		u8_t sca:3;
+		u8_t  chan_map[5];
+		u8_t  hop:5;
+		u8_t  sca:3;
 	} __packed lldata;
 } __packed;
 
@@ -78,8 +79,6 @@ struct pdu_adv {
 	u8_t rx_addr:1;
 
 	u8_t len:8;
-
-	u8_t resv:8; /* TODO: remove nRF specific code */
 
 	union {
 		struct pdu_adv_payload_adv_ind adv_ind;
@@ -122,12 +121,12 @@ enum pdu_data_llctrl_type {
 	PDU_DATA_LLCTRL_TYPE_LENGTH_RSP = 0x15,
 	PDU_DATA_LLCTRL_TYPE_PHY_REQ = 0x16,
 	PDU_DATA_LLCTRL_TYPE_PHY_RSP = 0x17,
-	PDU_DATA_LLCTRL_TYPE_PHY_UPDATE_IND = 0x18,
+	PDU_DATA_LLCTRL_TYPE_PHY_UPD_IND = 0x18,
 	PDU_DATA_LLCTRL_TYPE_MIN_USED_CHAN_IND = 0x19,
 };
 
 struct pdu_data_llctrl_conn_update_ind {
-	u8_t win_size;
+	u8_t  win_size;
 	u16_t win_offset;
 	u16_t interval;
 	u16_t latency;
@@ -136,7 +135,7 @@ struct pdu_data_llctrl_conn_update_ind {
 } __packed;
 
 struct pdu_data_llctrl_chan_map_ind {
-	u8_t chm[5];
+	u8_t  chm[5];
 	u16_t instant;
 } __packed;
 
@@ -169,7 +168,7 @@ struct pdu_data_llctrl_feature_rsp {
 } __packed;
 
 struct pdu_data_llctrl_version_ind {
-	u8_t version_number;
+	u8_t  version_number;
 	u16_t company_id;
 	u16_t sub_version_number;
 } __packed;
@@ -183,7 +182,7 @@ struct pdu_data_llctrl_conn_param_req {
 	u16_t interval_max;
 	u16_t latency;
 	u16_t timeout;
-	u8_t preferred_periodicity;
+	u8_t  preferred_periodicity;
 	u16_t reference_conn_event_count;
 	u16_t offset0;
 	u16_t offset1;
@@ -198,7 +197,7 @@ struct pdu_data_llctrl_conn_param_rsp {
 	u16_t interval_max;
 	u16_t latency;
 	u16_t timeout;
-	u8_t preferred_periodicity;
+	u8_t  preferred_periodicity;
 	u16_t reference_conn_event_count;
 	u16_t offset0;
 	u16_t offset1;
@@ -225,9 +224,9 @@ struct pdu_data_llctrl_phy_req_rsp {
 	u8_t rx_phys;
 } __packed;
 
-struct pdu_data_llctrl_phy_update_ind {
-	u8_t m_to_s_phy;
-	u8_t s_to_m_phy;
+struct pdu_data_llctrl_phy_upd_ind {
+	u8_t  m_to_s_phy;
+	u8_t  s_to_m_phy;
 	u16_t instant;
 } __packed;
 
@@ -257,7 +256,7 @@ struct pdu_data_llctrl {
 		struct pdu_data_llctrl_length_req_rsp length_rsp;
 		struct pdu_data_llctrl_phy_req_rsp phy_req;
 		struct pdu_data_llctrl_phy_req_rsp phy_rsp;
-		struct pdu_data_llctrl_phy_update_ind phy_update_ind;
+		struct pdu_data_llctrl_phy_upd_ind phy_upd_ind;
 		struct pdu_data_llctrl_min_used_chans_ind min_used_chans_ind;
 	} __packed ctrldata;
 } __packed;

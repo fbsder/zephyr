@@ -134,7 +134,7 @@ struct bt_gatt_attr {
 	/** Attribute user data */
 	void			*user_data;
 	/** Attribute handle */
-	u16_t		handle;
+	u16_t			handle;
 	/** Attribute permissions */
 	u8_t			perm;
 #if defined(CONFIG_BLUETOOTH_GATT_DYNAMIC_DB)
@@ -147,7 +147,7 @@ struct bt_gatt_service {
 	/** Service UUID. */
 	const struct bt_uuid	*uuid;
 	/** Service end handle. */
-	u16_t		end_handle;
+	u16_t			end_handle;
 };
 
 /** @brief Include Attribute Value. */
@@ -155,9 +155,9 @@ struct bt_gatt_include {
 	/** Service UUID. */
 	const struct bt_uuid	*uuid;
 	/** Service start handle. */
-	u16_t		start_handle;
+	u16_t			start_handle;
 	/** Service end handle. */
-	u16_t		end_handle;
+	u16_t			end_handle;
 };
 
 /* Characteristic Properties Bit field values */
@@ -343,7 +343,7 @@ ssize_t bt_gatt_attr_read(struct bt_conn *conn, const struct bt_gatt_attr *attr,
 /** @brief Read Service Attribute helper.
  *
  *  Read service attribute value storing the result into buffer after
- *  enconding it.
+ *  encoding it.
  *  NOTE: Only use this with attributes which user_data is a bt_uuid.
  *
  *  @param conn Connection object.
@@ -408,7 +408,7 @@ ssize_t bt_gatt_attr_read_service(struct bt_conn *conn,
 /** @brief Read Include Attribute helper.
  *
  *  Read include service attribute value storing the result into buffer after
- *  enconding it.
+ *  encoding it.
  *  NOTE: Only use this with attributes which user_data is a bt_gatt_include.
  *
  *  @param conn Connection object.
@@ -442,7 +442,7 @@ ssize_t bt_gatt_attr_read_included(struct bt_conn *conn,
 /** @brief Read Characteristic Attribute helper.
  *
  *  Read characteristic attribute value storing the result into buffer after
- *  enconding it.
+ *  encoding it.
  *  NOTE: Only use this with attributes which user_data is a bt_gatt_chrc.
  *
  *  @param conn Connection object.
@@ -497,7 +497,7 @@ struct _bt_gatt_ccc {
 /** @brief Read Client Characteristic Configuration Attribute helper.
  *
  *  Read CCC attribute value storing the result into buffer after
- *  enconding it.
+ *  encoding it.
  *  NOTE: Only use this with attributes which user_data is a _bt_gatt_ccc.
  *
  *  @param conn Connection object.
@@ -783,8 +783,8 @@ struct bt_gatt_discover_params;
  *  or BT_GATT_ITER_STOP to stop discovery procedure.
  */
 typedef u8_t (*bt_gatt_discover_func_t)(struct bt_conn *conn,
-					   const struct bt_gatt_attr *attr,
-					   struct bt_gatt_discover_params *params);
+					const struct bt_gatt_attr *attr,
+					struct bt_gatt_discover_params *params);
 
 enum {
 	BT_GATT_DISCOVER_PRIMARY,
@@ -859,8 +859,8 @@ struct bt_gatt_read_params;
  *  @param length Attribute value length.
  */
 typedef u8_t (*bt_gatt_read_func_t)(struct bt_conn *conn, u8_t err,
-				       struct bt_gatt_read_params *params,
-				       const void *data, u16_t length);
+				    struct bt_gatt_read_params *params,
+				    const void *data, u16_t length);
 
 /** @brief GATT Read parameters
  *  @param func Read attribute callback
@@ -908,7 +908,7 @@ struct bt_gatt_write_params;
  *  @param params Write parameters used.
  */
 typedef void (*bt_gatt_write_func_t)(struct bt_conn *conn, u8_t err,
-					struct bt_gatt_write_params *params);
+				     struct bt_gatt_write_params *params);
 
 /** @brief GATT Write parameters */
 struct bt_gatt_write_params {
@@ -943,7 +943,7 @@ int bt_gatt_write(struct bt_conn *conn, struct bt_gatt_write_params *params);
 /** @brief Write Attribute Value by handle without response
  *
  * This procedure write the attribute value without requiring an
- * acknowledgement that the write was successfully performed
+ * acknowledgment that the write was successfully performed
  *
  * @param conn Connection object.
  * @param handle Attribute handle.
@@ -968,8 +968,8 @@ struct bt_gatt_subscribe_params;
  *  @param length Attribute value length.
  */
 typedef u8_t (*bt_gatt_notify_func_t)(struct bt_conn *conn,
-					 struct bt_gatt_subscribe_params *params,
-					 const void *data, u16_t length);
+				      struct bt_gatt_subscribe_params *params,
+				      const void *data, u16_t length);
 
 /* Subscription flags */
 enum {

@@ -286,7 +286,6 @@ F:	include/sys_io.h
 F:	include/toolchain.h
 F:	include/zephyr.h
 F:	include/kernel.h
-F:	include/legacy.h
 F:	tests/kernel/
 
 KNOWN ISSUES
@@ -502,7 +501,7 @@ THE REST
 M:	Anas Nashif <anas.nashif@intel.com>
 M:	Kumar Gala <kumar.gala@linaro.org>
 L:	devel@lists.zephyrproject.com
-T:	git https://gerrit.zephyrproject.org/r/a/zephyr
+T:	git https://github.com/zephyrproject-rtos/zephyr
 S:	Buried alive in reporters
 F:	*
 F:	*/

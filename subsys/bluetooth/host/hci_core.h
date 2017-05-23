@@ -54,26 +54,23 @@ enum {
 
 struct bt_dev_le {
 	/* LE features */
-	u8_t			features[1][8];
+	u8_t			features[8];
 	/* LE states */
-	u64_t                states;
+	u64_t			states;
 
 #if defined(CONFIG_BLUETOOTH_CONN)
 	/* Controller buffer information */
-	u16_t		mtu;
+	u16_t			mtu;
 	struct k_sem		pkts;
 #endif /* CONFIG_BLUETOOTH_CONN */
 };
 
 #if defined(CONFIG_BLUETOOTH_BREDR)
-struct bt_dev_esco {
-	u16_t                pkt_type;
-};
-
 struct bt_dev_br {
 	/* Max controller's acceptable ACL packet length */
-	u16_t		mtu;
-	struct k_sem		pkts;
+	u16_t         mtu;
+	struct k_sem  pkts;
+	u16_t         esco_pkt_type;
 };
 #endif
 
@@ -88,9 +85,9 @@ struct bt_dev {
 	/* Controller version & manufacturer information */
 	u8_t			hci_version;
 	u8_t			lmp_version;
-	u16_t		hci_revision;
-	u16_t		lmp_subversion;
-	u16_t		manufacturer;
+	u16_t			hci_revision;
+	u16_t			lmp_subversion;
+	u16_t			manufacturer;
 
 	/* LMP features (pages 0, 1, 2) */
 	u8_t			features[LMP_FEAT_PAGES_COUNT][8];
@@ -108,7 +105,6 @@ struct bt_dev {
 #if defined(CONFIG_BLUETOOTH_BREDR)
 	/* BR/EDR controller specific features */
 	struct bt_dev_br	br;
-	struct bt_dev_esco      esco;
 #endif
 
 	/* Number of commands controller can accept */
@@ -155,12 +151,6 @@ struct net_buf *bt_hci_cmd_create(u16_t opcode, u8_t param_len);
 int bt_hci_cmd_send(u16_t opcode, struct net_buf *buf);
 int bt_hci_cmd_send_sync(u16_t opcode, struct net_buf *buf,
 			 struct net_buf **rsp);
-
-/* The helper is only safe to be called from internal threads as it's
- * not multi-threading safe
- */
-const char *bt_addr_str(const bt_addr_t *addr);
-const char *bt_addr_le_str(const bt_addr_le_t *addr);
 
 int bt_le_scan_update(bool fast_scan);
 

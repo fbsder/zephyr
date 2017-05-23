@@ -14,13 +14,14 @@
 #include <misc/byteorder.h>
 #include <misc/util.h>
 
-#define BT_DBG_ENABLED IS_ENABLED(CONFIG_BLUETOOTH_DEBUG_GATT)
-#include <bluetooth/log.h>
 #include <bluetooth/hci.h>
 #include <bluetooth/bluetooth.h>
 #include <bluetooth/uuid.h>
 #include <bluetooth/gatt.h>
 #include <bluetooth/hci_driver.h>
+
+#define BT_DBG_ENABLED IS_ENABLED(CONFIG_BLUETOOTH_DEBUG_GATT)
+#include "common/log.h"
 
 #include "hci_core.h"
 #include "conn_internal.h"
@@ -560,7 +561,7 @@ int bt_gatt_notify(struct bt_conn *conn, const struct bt_gatt_attr *attr,
 {
 	struct notify_data nfy;
 
-	__ASSERT(attr && attr->handler, "invalid parameters\n");
+	__ASSERT(attr && attr->handle, "invalid parameters\n");
 
 	if (conn) {
 		return gatt_notify(conn, attr->handle, data, len);
@@ -990,8 +991,8 @@ static int read_included_uuid(struct bt_conn *conn,
 }
 
 static u16_t parse_include(struct bt_conn *conn, const void *pdu,
-			      struct bt_gatt_discover_params *params,
-			      u16_t length)
+			   struct bt_gatt_discover_params *params,
+			   u16_t length)
 {
 	const struct bt_att_read_type_rsp *rsp = pdu;
 	u16_t handle = 0;
@@ -1082,8 +1083,8 @@ done:
 }
 
 static u16_t parse_characteristic(struct bt_conn *conn, const void *pdu,
-				     struct bt_gatt_discover_params *params,
-				     u16_t length)
+				  struct bt_gatt_discover_params *params,
+				  u16_t length)
 {
 	const struct bt_att_read_type_rsp *rsp = pdu;
 	u16_t handle = 0;

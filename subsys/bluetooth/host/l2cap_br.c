@@ -13,12 +13,13 @@
 #include <misc/byteorder.h>
 #include <misc/util.h>
 
-#define BT_DBG_ENABLED IS_ENABLED(CONFIG_BLUETOOTH_DEBUG_L2CAP)
-#include <bluetooth/log.h>
 #include <bluetooth/hci.h>
 #include <bluetooth/bluetooth.h>
 #include <bluetooth/conn.h>
 #include <bluetooth/hci_driver.h>
+
+#define BT_DBG_ENABLED IS_ENABLED(CONFIG_BLUETOOTH_DEBUG_L2CAP)
+#include "common/log.h"
 
 #include "hci_core.h"
 #include "conn_internal.h"
@@ -89,7 +90,7 @@ struct bt_l2cap_br {
 	struct bt_l2cap_br_chan	chan;
 	u8_t			info_ident;
 	u8_t			info_fixed_chan;
-	u32_t		info_feat_mask;
+	u32_t			info_feat_mask;
 };
 
 static struct bt_l2cap_br bt_l2cap_br_pool[CONFIG_BLUETOOTH_MAX_CONN];
@@ -893,7 +894,7 @@ static void l2cap_br_send_reject(struct bt_conn *conn, u8_t ident,
 }
 
 static u16_t l2cap_br_conf_opt_mtu(struct bt_l2cap_chan *chan,
-				      struct net_buf *buf, size_t len)
+				   struct net_buf *buf, size_t len)
 {
 	u16_t mtu, result = BT_L2CAP_CONF_SUCCESS;
 

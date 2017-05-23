@@ -8,11 +8,12 @@
 #include <atomic.h>
 #include <misc/byteorder.h>
 
-#define BT_DBG_ENABLED IS_ENABLED(CONFIG_BLUETOOTH_DEBUG_GATT)
-#include <bluetooth/log.h>
 #include <net/buf.h>
 #include <bluetooth/gatt.h>
 #include <bluetooth/att.h>
+
+#define BT_DBG_ENABLED IS_ENABLED(CONFIG_BLUETOOTH_DEBUG_GATT)
+#include "common/log.h"
 
 #include "conn.h"
 #include "conn_internal.h"
@@ -814,8 +815,8 @@ static u16_t parse_service(struct bt_conn *conn,
 }
 
 static u16_t parse_characteristic(struct bt_conn *conn,
-				     struct bt_gatt_discover_params *params,
-				     const u8_t *data, u8_t len)
+				  struct bt_gatt_discover_params *params,
+				  const u8_t *data, u8_t len)
 {
 	u16_t end_handle = 0;
 	int i;
@@ -847,8 +848,8 @@ static u16_t parse_characteristic(struct bt_conn *conn,
 }
 
 static u16_t parse_descriptor(struct bt_conn *conn,
-				 struct bt_gatt_discover_params *params,
-				 const u8_t *data, u8_t len)
+			      struct bt_gatt_discover_params *params,
+			      const u8_t *data, u8_t len)
 {
 	u16_t end_handle = 0;
 	int i;
@@ -1404,7 +1405,7 @@ void bt_gatt_cancel(struct bt_conn *conn, void *params)
 }
 
 static s32_t prep_write_evt(const struct nble_gatts_write_evt *ev,
-			      const u8_t *data, u8_t len)
+			    const u8_t *data, u8_t len)
 {
 #if CONFIG_BLUETOOTH_ATT_PREPARE_COUNT > 0
 	const struct bt_gatt_attr *attr = ev->attr;

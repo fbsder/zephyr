@@ -237,7 +237,7 @@ void _TimestampClose(void)
 	_TIMESTAMP_CTRL = 0x0;  /* disable oscillator */
 }
 
-#elif defined(CONFIG_SOC_ATMEL_SAM3)
+#elif defined(CONFIG_SOC_SERIES_SAM3X)
 /* Atmel SAM3 family processor - use RTT (Real-time Timer) */
 
 #include <soc.h>
@@ -258,7 +258,7 @@ void _TimestampClose(void)
 void _TimestampOpen(void)
 {
 	/* enable RTT clock from PMC */
-	__PMC->pcer0 = (1 << PID_RTT);
+	soc_pmc_peripheral_enable(ID_RTT);
 
 	/* Reset RTT and set prescaler to 1 */
 	_TIMESTAMP_MODE = (1 << 18) | (1 << 0);
@@ -301,7 +301,7 @@ u32_t _TimestampRead(void)
 void _TimestampClose(void)
 {
 	/* disable RTT clock from PMC */
-	__PMC->pcdr0 = (1 << PID_RTT);
+	soc_pmc_peripheral_disable(ID_RTT);
 }
 
 #else

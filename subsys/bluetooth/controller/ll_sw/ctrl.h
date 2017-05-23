@@ -32,14 +32,16 @@
 		CONFIG_BLUETOOTH_CONTROLLER_TX_BUFFER_SIZE
 #endif
 
+#define BIT64(n) (1ULL << (n))
+
 #if defined(CONFIG_BLUETOOTH_CONTROLLER_LE_PING)
-#define RADIO_BLE_FEAT_BIT_PING BIT(BT_LE_FEAT_BIT_PING)
+#define RADIO_BLE_FEAT_BIT_PING BIT64(BT_LE_FEAT_BIT_PING)
 #else /* !CONFIG_BLUETOOTH_CONTROLLER_LE_PING */
 #define RADIO_BLE_FEAT_BIT_PING 0
 #endif /* !CONFIG_BLUETOOTH_CONTROLLER_LE_PING */
 
 #if defined(CONFIG_BLUETOOTH_CONTROLLER_DATA_LENGTH_MAX)
-#define RADIO_BLE_FEAT_BIT_DLE BIT(BT_LE_FEAT_BIT_DLE)
+#define RADIO_BLE_FEAT_BIT_DLE BIT64(BT_LE_FEAT_BIT_DLE)
 #define RADIO_LL_LENGTH_OCTETS_RX_MAX \
 		CONFIG_BLUETOOTH_CONTROLLER_DATA_LENGTH_MAX
 #else
@@ -48,10 +50,22 @@
 #endif /* CONFIG_BLUETOOTH_CONTROLLER_DATA_LENGTH_MAX */
 
 #if defined(CONFIG_BLUETOOTH_CONTROLLER_CHAN_SEL_2)
-#define RADIO_BLE_FEAT_BIT_CHAN_SEL_2 BIT(BT_LE_FEAT_BIT_CHAN_SEL_ALGO_2)
+#define RADIO_BLE_FEAT_BIT_CHAN_SEL_2 BIT64(BT_LE_FEAT_BIT_CHAN_SEL_ALGO_2)
 #else /* !CONFIG_BLUETOOTH_CONTROLLER_CHAN_SEL_2 */
 #define RADIO_BLE_FEAT_BIT_CHAN_SEL_2 0
 #endif /* !CONFIG_BLUETOOTH_CONTROLLER_CHAN_SEL_2 */
+
+#if defined(CONFIG_BLUETOOTH_CONTROLLER_PHY_2M)
+#define RADIO_BLE_FEAT_BIT_PHY_2M BIT64(BT_LE_FEAT_BIT_PHY_2M)
+#else /* !CONFIG_BLUETOOTH_CONTROLLER_PHY_2M */
+#define RADIO_BLE_FEAT_BIT_PHY_2M 0
+#endif /* !CONFIG_BLUETOOTH_CONTROLLER_PHY_2M */
+
+#if defined(CONFIG_BLUETOOTH_CONTROLLER_PHY_CODED)
+#define RADIO_BLE_FEAT_BIT_PHY_CODED BIT64(BT_LE_FEAT_BIT_PHY_CODED)
+#else /* !CONFIG_BLUETOOTH_CONTROLLER_PHY_CODED */
+#define RADIO_BLE_FEAT_BIT_PHY_CODED 0
+#endif /* !CONFIG_BLUETOOTH_CONTROLLER_PHY_CODED */
 
 /*****************************************************************************
  * Timer Resources (Controller defined)
@@ -110,6 +124,8 @@
 					 BIT(BT_LE_FEAT_BIT_SLAVE_FEAT_REQ) | \
 					 RADIO_BLE_FEAT_BIT_PING | \
 					 RADIO_BLE_FEAT_BIT_DLE | \
+					 RADIO_BLE_FEAT_BIT_PHY_2M | \
+					 RADIO_BLE_FEAT_BIT_PHY_CODED | \
 					 RADIO_BLE_FEAT_BIT_CHAN_SEL_2)
 
 #if defined(CONFIG_BLUETOOTH_CONTROLLER_WORKER_PRIO)
@@ -199,6 +215,11 @@ enum radio_pdu_node_rx_type {
 	NODE_RX_TYPE_NONE,
 	NODE_RX_TYPE_DC_PDU,
 	NODE_RX_TYPE_REPORT,
+
+#if defined(CONFIG_BLUETOOTH_CONTROLLER_SCAN_REQ_NOTIFY)
+	NODE_RX_TYPE_SCAN_REQ,
+#endif /* CONFIG_BLUETOOTH_CONTROLLER_SCAN_REQ_NOTIFY */
+
 	NODE_RX_TYPE_CONNECTION,
 	NODE_RX_TYPE_TERMINATE,
 	NODE_RX_TYPE_CONN_UPDATE,
@@ -209,6 +230,10 @@ enum radio_pdu_node_rx_type {
 #endif /* CONFIG_BLUETOOTH_CONTROLLER_LE_PING */
 
 	NODE_RX_TYPE_CHAN_SEL_ALGO,
+
+#if defined(CONFIG_BLUETOOTH_CONTROLLER_PHY)
+	NODE_RX_TYPE_PHY_UPDATE,
+#endif /* CONFIG_BLUETOOTH_CONTROLLER_PHY */
 
 #if defined(CONFIG_BLUETOOTH_CONTROLLER_CONN_RSSI)
 	NODE_RX_TYPE_RSSI,
@@ -224,21 +249,21 @@ enum radio_pdu_node_rx_type {
 };
 
 struct radio_le_conn_cmplt {
-	u8_t status;
-	u8_t role;
-	u8_t peer_addr_type;
-	u8_t peer_addr[BDADDR_SIZE];
-	u8_t own_addr_type;
-	u8_t own_addr[BDADDR_SIZE];
-	u8_t peer_irk_index;
+	u8_t  status;
+	u8_t  role;
+	u8_t  peer_addr_type;
+	u8_t  peer_addr[BDADDR_SIZE];
+	u8_t  own_addr_type;
+	u8_t  own_addr[BDADDR_SIZE];
+	u8_t  peer_irk_index;
 	u16_t interval;
 	u16_t latency;
 	u16_t timeout;
-	u8_t mca;
+	u8_t  mca;
 } __packed;
 
 struct radio_le_conn_update_cmplt {
-	u8_t status;
+	u8_t  status;
 	u16_t interval;
 	u16_t latency;
 	u16_t timeout;
@@ -248,8 +273,15 @@ struct radio_le_chan_sel_algo {
 	u8_t chan_sel_algo;
 } __packed;
 
+struct radio_le_phy_upd_cmplt {
+	u8_t status;
+	u8_t tx;
+	u8_t rx;
+} __packed;
+
 struct radio_pdu_node_rx_hdr {
 	union {
+		sys_snode_t node; /* used by slist */
 		void *next; /* used also by k_fifo once pulled */
 		void *link;
 		u8_t packet_release_last;
@@ -261,7 +293,7 @@ struct radio_pdu_node_rx_hdr {
 
 struct radio_pdu_node_rx {
 	struct radio_pdu_node_rx_hdr hdr;
-	u8_t pdu_data[1];
+	u8_t   pdu_data[1];
 };
 
 /*****************************************************************************
@@ -269,27 +301,27 @@ struct radio_pdu_node_rx {
  ****************************************************************************/
 /* Downstream */
 u32_t radio_init(void *hf_clock, u8_t sca, u8_t connection_count_max,
-		    u8_t rx_count_max, u8_t tx_count_max,
-		    u16_t packet_data_octets_max,
-		    u16_t packet_tx_data_size, u8_t *mem_radio,
-		    u16_t mem_size);
+		 u8_t rx_count_max, u8_t tx_count_max,
+		 u16_t packet_data_octets_max,
+		 u16_t packet_tx_data_size, u8_t *mem_radio,
+		 u16_t mem_size);
 void radio_ticks_active_to_start_set(u32_t ticks_active_to_start);
 struct radio_adv_data *radio_adv_data_get(void);
 struct radio_adv_data *radio_scan_data_get(void);
 u32_t radio_adv_enable(u16_t interval, u8_t chl_map,
-		u8_t filter_policy);
+		       u8_t filter_policy);
 u32_t radio_adv_disable(void);
 u32_t radio_scan_enable(u8_t scan_type, u8_t init_addr_type,
-		u8_t *init_addr, u16_t interval,
-		u16_t window, u8_t filter_policy);
+			u8_t *init_addr, u16_t interval,
+			u16_t window, u8_t filter_policy);
 u32_t radio_scan_disable(void);
 
 u32_t radio_connect_enable(u8_t adv_addr_type, u8_t *adv_addr,
-		u16_t interval, u16_t latency,
-			      u16_t timeout);
+			   u16_t interval, u16_t latency,
+			   u16_t timeout);
 /* Upstream */
 u8_t radio_rx_get(struct radio_pdu_node_rx **radio_pdu_node_rx,
-		u16_t *handle);
+		  u16_t *handle);
 void radio_rx_dequeue(void);
 void radio_rx_mem_release(struct radio_pdu_node_rx **radio_pdu_node_rx);
 u8_t radio_rx_fc_set(u16_t handle, u8_t fc);
@@ -297,7 +329,7 @@ u8_t radio_rx_fc_get(u16_t *handle);
 struct radio_pdu_node_tx *radio_tx_mem_acquire(void);
 void radio_tx_mem_release(struct radio_pdu_node_tx *pdu_data_node_tx);
 u32_t radio_tx_mem_enqueue(u16_t handle,
-		struct radio_pdu_node_tx *pdu_data_node_tx);
+			   struct radio_pdu_node_tx *pdu_data_node_tx);
 /* Callbacks */
 extern void radio_active_callback(u8_t active);
 extern void radio_event_callback(void);

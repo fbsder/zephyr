@@ -11,7 +11,8 @@
 static int pos;
 char ram_console[BUF_SZ];
 
-extern int (*_char_out)(int);
+void __printk_hook_install(int (*fn)(int));
+void *__printk_get_hook(void);
 int (*_old_char_out)(int);
 
 char *expected = "22 113 10000 32768 40000 22\n"
@@ -23,6 +24,7 @@ char *expected = "22 113 10000 32768 40000 22\n"
 		 "-42 -42 -042 -0000042\n"
 		 "42 42   42       42\n"
 		 "42 42 0042 00000042\n"
+		 "255     42    abcdef  0x0000002a      42\n"
 ;
 
 
@@ -59,8 +61,8 @@ void printk_test(void)
 {
 	int count;
 
-	_old_char_out = _char_out;
-	_char_out = ram_console_out;
+	_old_char_out = __printk_get_hook();
+	__printk_hook_install(ram_console_out);
 
 	printk("%zu %hhu %hu %u %lu %llu\n", stv, uc, usi, ui, ul, ull);
 	printk("%c %hhd %hd %d %ld %lld\n", c, c, ssi, si, sl, sll);
@@ -71,6 +73,7 @@ void printk_test(void)
 	printk("%d %02d %04d %08d\n", -42, -42, -42, -42);
 	printk("%u %2u %4u %8u\n", 42, 42, 42, 42);
 	printk("%u %02u %04u %08u\n", 42, 42, 42, 42);
+	printk("%-8u%-6d%-4x%-2p%8d\n", 0xFF, 42, 0xABCDEF, (char *)42, 42);
 
 	ram_console[pos] = '\0';
 	zassert_true((strcmp(ram_console, expected) == 0), "printk failed");
@@ -97,7 +100,9 @@ void printk_test(void)
 			  "%u %2u %4u %8u\n", 42, 42, 42, 42);
 	count += snprintk(ram_console + count, sizeof(ram_console) - count,
 			  "%u %02u %04u %08u\n", 42, 42, 42, 42);
-
+	count += snprintk(ram_console + count, sizeof(ram_console) - count,
+			  "%-8u%-6d%-4x%-2p%8d\n",
+			  0xFF, 42, 0xABCDEF, (char *)42, 42);
 	ram_console[count] = '\0';
 	zassert_true((strcmp(ram_console, expected) == 0), "snprintk failed");
 }

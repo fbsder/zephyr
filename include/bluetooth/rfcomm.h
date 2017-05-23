@@ -21,7 +21,8 @@
 extern "C" {
 #endif
 
-#include <bluetooth/log.h>
+/* FIXME: temporary workaround until thread details are made internal */
+#include "../../subsys/bluetooth/common/log.h"
 #include <bluetooth/buf.h>
 #include <bluetooth/conn.h>
 
@@ -90,12 +91,13 @@ struct bt_rfcomm_dlc {
 	bt_security_t              required_sec_level;
 	bt_rfcomm_role_t           role;
 
-	u16_t                   mtu;
-	u8_t                    dlci;
-	u8_t                    state;
-	u8_t                    rx_credit;
+	u16_t                      mtu;
+	u8_t                       dlci;
+	u8_t                       state;
+	u8_t                       rx_credit;
 
-	/* Stack for TX fiber */
+	/* Stack & kernel data for TX thread */
+	struct k_thread            tx_thread;
 	BT_STACK(stack, 256);
 };
 

@@ -13,12 +13,13 @@
 #include <misc/byteorder.h>
 #include <misc/util.h>
 
-#define BT_DBG_ENABLED IS_ENABLED(CONFIG_BLUETOOTH_DEBUG_L2CAP)
-#include <bluetooth/log.h>
 #include <bluetooth/hci.h>
 #include <bluetooth/bluetooth.h>
 #include <bluetooth/conn.h>
 #include <bluetooth/hci_driver.h>
+
+#define BT_DBG_ENABLED IS_ENABLED(CONFIG_BLUETOOTH_DEBUG_L2CAP)
+#include "common/log.h"
 
 #include "hci_core.h"
 #include "conn_internal.h"
@@ -27,7 +28,13 @@
 #define LE_CHAN_RTX(_w) CONTAINER_OF(_w, struct bt_l2cap_le_chan, chan.rtx_work)
 
 #define L2CAP_LE_MIN_MTU		23
+
+#if defined(CONFIG_BLUETOOTH_HCI_ACL_FLOW_CONTROL)
+#define L2CAP_LE_MAX_CREDITS		(CONFIG_BLUETOOTH_ACL_RX_COUNT - 1)
+#else
 #define L2CAP_LE_MAX_CREDITS		(CONFIG_BLUETOOTH_RX_BUF_COUNT - 1)
+#endif
+
 #define L2CAP_LE_CREDITS_THRESHOLD(_creds) (_creds / 2)
 
 #define L2CAP_LE_CID_DYN_START	0x0040
@@ -41,28 +48,21 @@
 #define L2CAP_CONN_TIMEOUT	K_SECONDS(40)
 #define L2CAP_DISC_TIMEOUT	K_SECONDS(1)
 
+static sys_slist_t le_channels;
+
+#if defined(CONFIG_BLUETOOTH_L2CAP_DYNAMIC_CHANNEL)
 /* Size of MTU is based on the maximum amount of data the buffer can hold
  * excluding ACL and driver headers.
  */
-#define BT_L2CAP_MAX_LE_MPS	BT_L2CAP_RX_MTU
+#define L2CAP_MAX_LE_MPS	BT_L2CAP_RX_MTU
 /* For now use MPS - SDU length to disable segmentation */
-#define BT_L2CAP_MAX_LE_MTU	(BT_L2CAP_MAX_LE_MPS - 2)
+#define L2CAP_MAX_LE_MTU	(L2CAP_MAX_LE_MPS - 2)
 
-#if defined(CONFIG_BLUETOOTH_L2CAP_DYNAMIC_CHANNEL)
 #define l2cap_lookup_ident(conn, ident) __l2cap_lookup_ident(conn, ident, false)
 #define l2cap_remove_ident(conn, ident) __l2cap_lookup_ident(conn, ident, true)
-#endif /* CONFIG_BLUETOOTH_L2CAP_DYNAMIC_CHANNEL */
 
-static sys_slist_t le_channels;
-#if defined(CONFIG_BLUETOOTH_L2CAP_DYNAMIC_CHANNEL)
 static sys_slist_t servers;
-#endif /* CONFIG_BLUETOOTH_L2CAP_DYNAMIC_CHANNEL */
 
-#if defined(CONFIG_BLUETOOTH_L2CAP_DYNAMIC_CHANNEL)
-/* Pool for outgoing LE data packets, MTU is 23 */
-NET_BUF_POOL_DEFINE(le_data_pool, CONFIG_BLUETOOTH_MAX_CONN,
-		    BT_L2CAP_BUF_SIZE(BT_L2CAP_MAX_LE_MPS),
-		    BT_BUF_USER_DATA_MIN, NULL);
 #endif /* CONFIG_BLUETOOTH_L2CAP_DYNAMIC_CHANNEL */
 
 /* L2CAP signalling channel specific context */
@@ -634,21 +634,22 @@ static void l2cap_chan_rx_init(struct bt_l2cap_le_chan *chan)
 
 	/* Use existing MTU if defined */
 	if (!chan->rx.mtu) {
-		chan->rx.mtu = BT_L2CAP_MAX_LE_MTU;
+		chan->rx.mtu = L2CAP_MAX_LE_MTU;
 	}
 
 	/* Use existing credits if defined */
 	if (!chan->rx.init_credits) {
 		if (chan->chan.ops->alloc_buf) {
 			/* Auto tune credits to receive a full packet */
-			chan->rx.init_credits = chan->rx.mtu /
-						BT_L2CAP_MAX_LE_MPS;
+			chan->rx.init_credits = (chan->rx.mtu +
+						 (L2CAP_MAX_LE_MPS - 1)) /
+						L2CAP_MAX_LE_MPS;
 		} else {
 			chan->rx.init_credits = L2CAP_LE_MAX_CREDITS;
 		}
 	}
 
-	chan->rx.mps = BT_L2CAP_MAX_LE_MPS;
+	chan->rx.mps = L2CAP_MAX_LE_MPS;
 	k_sem_init(&chan->rx.credits, 0, UINT_MAX);
 }
 
@@ -1008,7 +1009,7 @@ static inline struct net_buf *l2cap_alloc_seg(struct net_buf *buf)
 
 	/* Try to use original pool if possible */
 	if (buf->pool->user_data_size >= BT_BUF_USER_DATA_MIN &&
-	    buf->pool->buf_size >= BT_L2CAP_BUF_SIZE(BT_L2CAP_MAX_LE_MPS)) {
+	    buf->pool->buf_size >= BT_L2CAP_BUF_SIZE(L2CAP_MAX_LE_MPS)) {
 		seg = net_buf_alloc(buf->pool, K_NO_WAIT);
 		if (seg) {
 			net_buf_reserve(seg, BT_L2CAP_CHAN_SEND_RESERVE);
@@ -1016,7 +1017,8 @@ static inline struct net_buf *l2cap_alloc_seg(struct net_buf *buf)
 		}
 	}
 
-	return bt_l2cap_create_pdu(&le_data_pool, 0);
+	/* Fallback to using global connection tx pool */
+	return bt_l2cap_create_pdu(NULL, 0);
 }
 
 static struct net_buf *l2cap_chan_create_seg(struct bt_l2cap_le_chan *ch,
@@ -1083,11 +1085,8 @@ static int l2cap_chan_le_send(struct bt_l2cap_le_chan *ch, struct net_buf *buf,
 	}
 
 	buf = l2cap_chan_create_seg(ch, buf, sdu_hdr_len);
-	if (!buf) {
-		return -ENOMEM;
-	}
 
-	/* Channel may have been disconnected while waiting for credits */
+	/* Channel may have been disconnected while waiting for a buffer */
 	if (!ch->chan.conn) {
 		net_buf_unref(buf);
 		return -ECONNRESET;
