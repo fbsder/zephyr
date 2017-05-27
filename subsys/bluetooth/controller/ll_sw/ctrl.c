@@ -1498,6 +1498,48 @@ isr_rx_conn_pkt_ctrl_rej_conn_upd(struct radio_pdu_node_rx *radio_pdu_node_rx,
 	}
 }
 
+#if defined(CONFIG_BLUETOOTH_CONTROLLER_DATA_LENGTH)
+static inline void
+isr_rx_conn_pkt_ctrl_rej_dle(struct radio_pdu_node_rx *radio_pdu_node_rx,
+			     u8_t *rx_enqueue)
+{
+	struct pdu_data_llctrl_reject_ext_ind *rej_ext_ind;
+	struct pdu_data *pdu_data_rx;
+
+	pdu_data_rx = (struct pdu_data *)radio_pdu_node_rx->pdu_data;
+	rej_ext_ind = (struct pdu_data_llctrl_reject_ext_ind *)
+		      &pdu_data_rx->payload.llctrl.ctrldata.reject_ext_ind;
+	if (rej_ext_ind->reject_opcode == PDU_DATA_LLCTRL_TYPE_LENGTH_REQ) {
+		struct pdu_data_llctrl_length_req_rsp *lr;
+
+		/* Procedure complete */
+		_radio.conn_curr->llcp_length.ack =
+			_radio.conn_curr->llcp_length.req;
+		_radio.conn_curr->procedure_expire = 0;
+
+		/* Resume data packet tx */
+		_radio.conn_curr->pause_tx = 0;
+
+		/* prepare length rsp structure */
+		pdu_data_rx->len = offsetof(struct pdu_data_llctrl,
+					    ctrldata) +
+			sizeof(struct pdu_data_llctrl_length_req_rsp);
+		pdu_data_rx->payload.llctrl.opcode =
+			PDU_DATA_LLCTRL_TYPE_LENGTH_RSP;
+
+		lr = (struct pdu_data_llctrl_length_req_rsp *)
+			&pdu_data_rx->payload.llctrl.ctrldata.length_req;
+		lr->max_rx_octets = _radio.conn_curr->max_rx_octets;
+		lr->max_rx_time = ((_radio.conn_curr->max_rx_octets + 14) << 3);
+		lr->max_tx_octets = _radio.conn_curr->max_tx_octets;
+		lr->max_tx_time = ((_radio.conn_curr->max_tx_octets + 14) << 3);
+
+		/* enqueue a length rsp */
+		*rx_enqueue = 1;
+	}
+}
+#endif /* CONFIG_BLUETOOTH_CONTROLLER_DATA_LENGTH */
+
 #if defined(CONFIG_BLUETOOTH_CONTROLLER_PHY)
 static inline void
 isr_rx_conn_pkt_ctrl_rej_phy_upd(struct radio_pdu_node_rx *radio_pdu_node_rx,
@@ -1563,6 +1605,13 @@ isr_rx_conn_pkt_ctrl_rej(struct radio_pdu_node_rx *radio_pdu_node_rx,
 			break;
 		}
 
+#if defined(CONFIG_BLUETOOTH_CONTROLLER_DATA_LENGTH)
+	} else if (_radio.conn_curr->llcp_length.ack !=
+		   _radio.conn_curr->llcp_length.req) {
+		isr_rx_conn_pkt_ctrl_rej_dle(radio_pdu_node_rx,
+					     rx_enqueue);
+#endif /* CONFIG_BLUETOOTH_CONTROLLER_DATA_LENGTH */
+
 #if defined(CONFIG_BLUETOOTH_CONTROLLER_PHY)
 	} else if (_radio.conn_curr->llcp_phy.ack !=
 		   _radio.conn_curr->llcp_phy.req) {
@@ -1583,30 +1632,35 @@ static inline u8_t isr_rx_conn_pkt_ctrl_dle(struct pdu_data *pdu_data_rx,
 	eff_rx_octets = _radio.conn_curr->max_rx_octets;
 	eff_tx_octets = _radio.conn_curr->max_tx_octets;
 
-	if (/* Local idle, and peer request; complete the peer procedure
+	if (/* Local idle, and Peer request then complete the Peer procedure
 	     * with response.
 	     */
 	    ((_radio.conn_curr->llcp_length.req ==
 	      _radio.conn_curr->llcp_length.ack) &&
-	     (PDU_DATA_LLCTRL_TYPE_LENGTH_REQ ==
-	      pdu_data_rx->payload.llctrl.opcode)) ||
-	    /* or Local has requested... */
+	     (pdu_data_rx->payload.llctrl.opcode ==
+	      PDU_DATA_LLCTRL_TYPE_LENGTH_REQ)) ||
+	    /* or Local has active... */
 	    ((_radio.conn_curr->llcp_length.req !=
 	      _radio.conn_curr->llcp_length.ack) &&
-	     /* and Local request, and peer request; override with peer
-	      * procedure, and complete the peer procedure with response.
+	     /* with Local requested and Peer request then complete the
+	      * Peer procedure with response.
 	      */
-	     (((LLCP_LENGTH_STATE_REQ == _radio.conn_curr->llcp_length.state) &&
-	       (PDU_DATA_LLCTRL_TYPE_LENGTH_REQ ==
-		pdu_data_rx->payload.llctrl.opcode)) ||
-	      /* and Local wait, and peer response; complete the
-	       * local procedure.
+	     ((((_radio.conn_curr->llcp_length.state ==
+		 LLCP_LENGTH_STATE_REQ) ||
+		(_radio.conn_curr->llcp_length.state ==
+		 LLCP_LENGTH_STATE_ACK_WAIT)) &&
+	       (pdu_data_rx->payload.llctrl.opcode ==
+		PDU_DATA_LLCTRL_TYPE_LENGTH_REQ)) ||
+	      /* with Local waiting for response, and Peer response then
+	       * complete the Local procedure or Peer request then complete the
+	       * Peer procedure with response.
 	       */
-	      ((LLCP_LENGTH_STATE_RSP_WAIT ==
-		_radio.conn_curr->llcp_length.state) &&
-	       (PDU_DATA_LLCTRL_TYPE_LENGTH_RSP ==
-		pdu_data_rx->payload.llctrl.opcode))))) {
-
+	      ((_radio.conn_curr->llcp_length.state ==
+		LLCP_LENGTH_STATE_RSP_WAIT) &&
+	       ((pdu_data_rx->payload.llctrl.opcode ==
+		 PDU_DATA_LLCTRL_TYPE_LENGTH_RSP) ||
+		(pdu_data_rx->payload.llctrl.opcode ==
+		 PDU_DATA_LLCTRL_TYPE_LENGTH_REQ)))))) {
 		struct pdu_data_llctrl_length_req_rsp *lr;
 
 		lr = (struct pdu_data_llctrl_length_req_rsp *)
@@ -1684,7 +1738,9 @@ static inline u8_t isr_rx_conn_pkt_ctrl_dle(struct pdu_data *pdu_data_rx,
 			*rx_enqueue = 1;
 		}
 	} else {
-		LL_ASSERT(0);
+		/* Drop response with no Local initiated request. */
+		LL_ASSERT(pdu_data_rx->payload.llctrl.opcode ==
+			  PDU_DATA_LLCTRL_TYPE_LENGTH_RSP);
 	}
 
 	if ((PDU_DATA_LLCTRL_TYPE_LENGTH_REQ ==
@@ -5963,7 +6019,7 @@ static inline void event_len_prep(struct connection *conn)
 		node_rx->hdr.handle = conn->handle;
 		node_rx->hdr.type = NODE_RX_TYPE_DC_PDU;
 
-		/* prepare version ind structure */
+		/* prepare length rsp structure */
 		pdu_ctrl_rx = (struct pdu_data *) node_rx->pdu_data;
 		pdu_ctrl_rx->ll_id = PDU_DATA_LLID_CTRL;
 		pdu_ctrl_rx->len = offsetof(struct pdu_data_llctrl,
