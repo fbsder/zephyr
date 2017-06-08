@@ -29,6 +29,13 @@ static void https_disable(struct http_server_ctx *ctx);
 
 #if defined(MBEDTLS_DEBUG_C)
 #include <mbedtls/debug.h>
+/* - Debug levels (from ext/lib/crypto/mbedtls/include/mbedtls/debug.h)
+ *    - 0 No debug
+ *    - 1 Error
+ *    - 2 State change
+ *    - 3 Informational
+ *    - 4 Verbose
+ */
 #define DEBUG_THRESHOLD 0
 #endif
 
@@ -670,6 +677,7 @@ fail:
 	}
 
 quit:
+	http_parser_init(&http_ctx->req.parser, HTTP_REQUEST);
 	http_ctx->req.data_len = 0;
 	net_pkt_unref(pkt);
 }
@@ -957,6 +965,7 @@ static void my_debug(void *ctx, int level,
 		     const char *file, int line, const char *str)
 {
 	const char *p, *basename;
+	int len;
 
 	ARG_UNUSED(ctx);
 
@@ -966,6 +975,12 @@ static void my_debug(void *ctx, int level,
 			basename = p + 1;
 		}
 
+	}
+
+	/* Avoid printing double newlines */
+	len = strlen(str);
+	if (str[len - 1] == '\n') {
+		((char *)str)[len - 1] = '\0';
 	}
 
 	NET_DBG("%s:%04d: |%d| %s", basename, line, level, str);
@@ -1006,11 +1021,7 @@ static void ssl_received(struct net_context *context,
 	ARG_UNUSED(context);
 	ARG_UNUSED(status);
 
-	if (!pkt) {
-		return;
-	}
-
-	if (!net_pkt_appdatalen(pkt)) {
+	if (pkt && !net_pkt_appdatalen(pkt)) {
 		net_pkt_unref(pkt);
 		return;
 	}
@@ -1047,6 +1058,11 @@ static int ssl_rx(void *context, unsigned char *buf, size_t size)
 	if (!ctx->https.mbedtls.ssl_ctx.frag) {
 		rx_data = k_fifo_get(&ctx->https.mbedtls.ssl_ctx.rx_fifo,
 				     K_FOREVER);
+		if (!rx_data->pkt) {
+			NET_DBG("Closing %p connection", ctx);
+			k_mem_pool_free(&rx_data->block);
+			return -EIO;
+		}
 
 		ctx->https.mbedtls.ssl_ctx.rx_pkt = rx_data->pkt;
 
@@ -1247,6 +1263,10 @@ static int https_send(struct net_pkt *pkt,
 	} while (ret <= 0);
 
 out:
+	if (cb) {
+		cb(net_pkt_context(pkt), ret, token, user_data);
+	}
+
 	return ret;
 }
 
@@ -1275,11 +1295,6 @@ static void https_handler(struct http_server_ctx *ctx)
 
 	heap_init(ctx);
 
-#if defined(MBEDTLS_DEBUG_C) && defined(CONFIG_NET_DEBUG_HTTP)
-	mbedtls_debug_set_threshold(DEBUG_THRESHOLD);
-	mbedtls_ssl_conf_dbg(&ctx->https.mbedtls.conf, my_debug, NULL);
-#endif
-
 #if defined(MBEDTLS_X509_CRT_PARSE_C)
 	mbedtls_x509_crt_init(&ctx->https.mbedtls.srvcert);
 #endif
@@ -1289,6 +1304,11 @@ static void https_handler(struct http_server_ctx *ctx)
 	mbedtls_ssl_config_init(&ctx->https.mbedtls.conf);
 	mbedtls_entropy_init(&ctx->https.mbedtls.entropy);
 	mbedtls_ctr_drbg_init(&ctx->https.mbedtls.ctr_drbg);
+
+#if defined(MBEDTLS_DEBUG_C) && defined(CONFIG_NET_DEBUG_HTTP)
+	mbedtls_debug_set_threshold(DEBUG_THRESHOLD);
+	mbedtls_ssl_conf_dbg(&ctx->https.mbedtls.conf, my_debug, NULL);
+#endif
 
 	/* Load the certificates and private RSA key. This needs to be done
 	 * by the user so we call a callback that user must have provided.
@@ -1369,8 +1389,6 @@ reset:
 		if (ret != MBEDTLS_ERR_SSL_WANT_READ &&
 		    ret != MBEDTLS_ERR_SSL_WANT_WRITE) {
 			if (ret < 0) {
-				print_error("mbedtls_ssl_handshake returned "
-					    "-0x%x", ret);
 				goto reset;
 			}
 		}
@@ -1424,7 +1442,10 @@ reset:
 	}
 
 close:
+	http_parser_init(&ctx->req.parser, HTTP_REQUEST);
+
 	mbedtls_ssl_close_notify(&ctx->https.mbedtls.ssl);
+
 	goto reset;
 
 exit:

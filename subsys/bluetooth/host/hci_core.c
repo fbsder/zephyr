@@ -580,6 +580,7 @@ static void hci_disconn_complete(struct net_buf *buf)
 	conn->err = evt->reason;
 
 	/* Check stacks usage (no-ops if not enabled) */
+	k_call_stacks_analyze();
 #if !defined(CONFIG_BLUETOOTH_RECV_IS_RX_THREAD)
 	stack_analyze("rx stack", rx_thread_stack, sizeof(rx_thread_stack));
 #endif
@@ -3338,7 +3339,8 @@ static int le_init(void)
 		net_buf_unref(rsp);
 	}
 
-	if (BT_FEAT_LE_DLE(bt_dev.le.features)) {
+	if (IS_ENABLED(CONFIG_BLUETOOTH_CONN) &&
+	    BT_FEAT_LE_DLE(bt_dev.le.features)) {
 		struct bt_hci_cp_le_write_default_data_len *cp;
 		struct bt_hci_rp_le_read_max_data_len *rp;
 		struct net_buf *buf, *rsp;

@@ -266,6 +266,10 @@ static void game_ended(bool won)
 {
 	struct mb_display *disp = mb_display_get();
 
+	if (sound_state != SOUND_IDLE) {
+		sound_set(SOUND_IDLE);
+	}
+
 	remote_lost = won;
 	ended = k_uptime_get();
 	started = false;
@@ -297,6 +301,12 @@ static void game_refresh(struct k_work *work)
 {
 	if (sound_state != SOUND_IDLE) {
 		sound_set(SOUND_IDLE);
+		k_call_stacks_analyze();
+	}
+
+	if (state == INIT) {
+		pong_select(&mode_selection);
+		return;
 	}
 
 	if (ended) {
@@ -375,6 +385,21 @@ void pong_ball_received(s8_t x_pos, s8_t y_pos, s8_t x_vel, s8_t y_vel)
 static void button_pressed(struct device *dev, struct gpio_callback *cb,
 			   u32_t pins)
 {
+	/* Filter out spurious presses */
+	if (pins & BIT(SW0_GPIO_PIN)) {
+		printk("A pressed\n");
+		if (k_uptime_delta(&a_timestamp) < K_MSEC(100)) {
+			printk("Too quick A presses\n");
+			return;
+		}
+	} else {
+		printk("B pressed\n");
+		if (k_uptime_delta(&b_timestamp) < K_MSEC(100)) {
+			printk("Too quick B presses\n");
+			return;
+		}
+	}
+
 	if (ended && (k_uptime_get() - ended) > RESTART_THRESHOLD) {
 		k_delayed_work_cancel(&refresh);
 		game_init(state == SINGLE || remote_lost);
@@ -390,15 +415,12 @@ static void button_pressed(struct device *dev, struct gpio_callback *cb,
 	}
 
 	if (pins & BIT(SW0_GPIO_PIN)) {
-		printk("A pressed\n");
-
 		if (select) {
 			pong_select_change();
 			return;
 		}
 
 		if (!started) {
-			a_timestamp = k_uptime_get();
 			check_start();
 		}
 
@@ -411,15 +433,12 @@ static void button_pressed(struct device *dev, struct gpio_callback *cb,
 			k_sem_give(&disp_update);
 		}
 	} else {
-		printk("B pressed\n");
-
 		if (select) {
 			pong_select_complete();
 			return;
 		}
 
 		if (!started) {
-			b_timestamp = k_uptime_get();
 			check_start();
 		}
 
@@ -444,7 +463,7 @@ void pong_conn_ready(bool initiator)
 void pong_remote_disconnected(void)
 {
 	state = INIT;
-	pong_select(&mode_selection);
+	k_delayed_work_submit(&refresh, K_SECONDS(1));
 }
 
 void pong_remote_lost(void)
