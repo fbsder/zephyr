@@ -177,10 +177,67 @@ __start:
 	bltu  	a6, a7, .L0zte	/* loop until end of table of *.bss sections */
 .L3zte:
 
+<<<<<<< HEAD:arch/xtensa/core/crt1.S
 #endif /* !XCHAL_HAVE_BOOTLOADER */
+=======
+	/*
+	 * Assume minimalist environment for memory-constrained TX cores.
+	 * No C library or board initialization, no parameters passed to main
+	 * (assume declared as "void main(void)") and no call to exit().
+	 */
+	CALL	main
+	halt
+
+#else /* !HALT */
+
+	.type	board_init, @function
+	.type	exit, @function
+
+
+	 /*  Initialize the board (eg. UART, etc). */
+	CALL	board_init
+
+	/*  Call:   int main(int argc, char ** argv, char ** environ); */
+	movi	ARG1, _start_argc	/* argc address */
+	movi	ARG2, _start_argv	/* argv = ["", 0] */
+	movi	ARG3, _start_envp	/* envp = [0] */
+	l32i	ARG1, ARG1, 0		/* argc = 1 */
+	CALL	main
+	/* The return value is the same register as the first
+	 * outgoing argument.
+	 */
+	CALL	exit			/* exit with main's return value */
+	/* Does not return here. */
+
+	.data
+	/*
+	 * Mark argc/argv/envp parameters as weak so that an external
+	 * object file can override them.
+	 */
+	.weak	_start_argc, _start_argv, _start_envp
+	.align	4
+_start_argv:
+	.word	_start_null	/* empty program name */
+_start_null:
+_start_envp:
+	/* end of argv array, empty string, empty environ */
+	.word	0
+_start_argc:
+	.word	1		/* one argument (program name) */
+	.text
+>>>>>>> upstream/core:arch/xtensa/core/crt1-boards.S
 
 	/* Enter C domain, never returns from here */
 	CALL	_Cstart
 
 	.size	_start, . - _start
+
+	.align 4
+exit:
+#if XCHAL_HAVE_INTERRUPTS
+	waiti	15
+#endif
+	j	exit
+
+	.size exit, . - exit
 
