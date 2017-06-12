@@ -39,11 +39,7 @@ static void https_disable(struct http_server_ctx *ctx);
 #define DEBUG_THRESHOLD 0
 #endif
 
-#if defined(MBEDTLS_MEMORY_BUFFER_ALLOC_C)
-#include <mbedtls/memory_buffer_alloc.h>
-static unsigned char heap[CONFIG_HTTPS_HEAP_SIZE];
-#endif
-#endif
+#endif /* CONFIG_HTTPS */
 
 #define HTTP_DEFAULT_PORT  80
 #define HTTPS_DEFAULT_PORT 443
@@ -63,6 +59,46 @@ static unsigned char heap[CONFIG_HTTPS_HEAP_SIZE];
 
 #define HTTP_STATUS_404_NF	"HTTP/1.1 404 Not Found\r\n" \
 				"\r\n"
+
+#if defined(CONFIG_NET_DEBUG_HTTP_CONN)
+/** List of HTTP connections */
+static sys_slist_t http_conn;
+
+static http_server_cb_t ctx_mon;
+static void *mon_user_data;
+
+static void http_server_conn_add(struct http_server_ctx *ctx)
+{
+	sys_slist_prepend(&http_conn, &ctx->node);
+
+	if (ctx_mon) {
+		ctx_mon(ctx, mon_user_data);
+	}
+}
+
+static void http_server_conn_del(struct http_server_ctx *ctx)
+{
+	sys_slist_find_and_remove(&http_conn, &ctx->node);
+}
+
+void http_server_conn_foreach(http_server_cb_t cb, void *user_data)
+{
+	struct http_server_ctx *ctx;
+
+	SYS_SLIST_FOR_EACH_CONTAINER(&http_conn, ctx, node) {
+		cb(ctx, user_data);
+	}
+}
+
+void http_server_conn_monitor(http_server_cb_t cb, void *user_data)
+{
+	ctx_mon = cb;
+	mon_user_data = user_data;
+}
+#else
+#define http_server_conn_add(...)
+#define http_server_conn_del(...)
+#endif /* CONFIG_NET_DEBUG_HTTP_CONN */
 
 static inline u16_t http_strlen(const char *str)
 {
@@ -135,6 +171,9 @@ static void req_timeout(struct k_work *work)
 	NET_DBG("Context %p request timeout", ctx);
 
 	net_context_unref(ctx->req.net_ctx);
+	ctx->req.net_ctx = NULL;
+
+	http_server_conn_del(ctx);
 }
 
 static void pkt_sent(struct net_context *context,
@@ -150,6 +189,7 @@ static void pkt_sent(struct net_context *context,
 	if (timeout == K_NO_WAIT) {
 		/* We can just close the context after the packet is sent. */
 		net_context_unref(context);
+		http_server_conn_del(ctx);
 	} else if (timeout > 0) {
 		NET_DBG("Context %p starting timer", ctx);
 
@@ -472,6 +512,8 @@ static int on_url(struct http_parser *parser, const char *at, size_t length)
 	ctx->req.url = at;
 	ctx->req.url_len = length;
 
+	http_server_conn_add(ctx);
+
 	return 0;
 }
 
@@ -694,6 +736,19 @@ static void accept_cb(struct net_context *net_ctx,
 	if (status != 0) {
 		net_context_put(net_ctx);
 		return;
+	}
+
+	/* If we receive a HTTP request and if the earlier context is still
+	 * active and it is not the same as the new one, then close the earlier
+	 * one. Otherwise it is possible that the context will be left into
+	 * TCP ESTABLISHED state and would never be released. Example of this
+	 * is that we had IPv4 connection active and then IPv6 connection is
+	 * established, in this case we disconnect the IPv4 here.
+	 */
+	if (http_ctx->req.net_ctx && http_ctx->req.net_ctx != net_ctx &&
+	    net_context_get_state(http_ctx->req.net_ctx) ==
+						      NET_CONTEXT_CONNECTED) {
+		net_context_unref(http_ctx->req.net_ctx);
 	}
 
 	http_ctx->req.net_ctx = net_ctx;
@@ -1270,20 +1325,6 @@ out:
 	return ret;
 }
 
-#if defined(MBEDTLS_MEMORY_BUFFER_ALLOC_C)
-static void heap_init(struct http_server_ctx *ctx)
-{
-	static bool heap_init;
-
-	if (!heap_init) {
-		mbedtls_memory_buffer_alloc_init(heap, sizeof(heap));
-		heap_init = true;
-	}
-}
-#else
-#define heap_init(...)
-#endif
-
 static void https_handler(struct http_server_ctx *ctx)
 {
 	size_t len;
@@ -1293,7 +1334,7 @@ static void https_handler(struct http_server_ctx *ctx)
 
 	mbedtls_platform_set_printf(printk);
 
-	heap_init(ctx);
+	http_heap_init();
 
 #if defined(MBEDTLS_X509_CRT_PARSE_C)
 	mbedtls_x509_crt_init(&ctx->https.mbedtls.srvcert);
