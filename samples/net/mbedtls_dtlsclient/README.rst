@@ -12,14 +12,11 @@ Building and running
 
 Follow the steps for testing :ref:`networking_with_qemu`.
 
-Obtain the mbed TLS code from:
-
-https://tls.mbed.org/download/start/mbedtls-2.3.0-apache.tgz
-
+Obtain the mbed TLS code from: https://tls.mbed.org/download-archive
 and put it in a well known directory on your Linux machine, this will be your
-server.
+server. (We're using version 2.3.0 for this example.)
 
-change to that directory and compile the mbedTLS on your host machine:
+Change to that directory and compile the mbedTLS on your host machine:
 
 .. code-block:: console
 
@@ -41,8 +38,9 @@ Assign the server IP address and start the DTLS server.
    . Setting up the SSL/TLS structure... ok
    . Waiting for a remote connection ...
 
-To stop the server use Ctrl-C and repeat steps described in f) every time
-QEMU gets terminated, due the Netwrok interface (tap) being restarted.
+To stop the server, use Ctrl-C and repeat the steps described in
+:ref:`networking_with_qemu` every time
+QEMU gets terminated, due the Network interface (tap) being restarted.
 
 From the application directory type
 
