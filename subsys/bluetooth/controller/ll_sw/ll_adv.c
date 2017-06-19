@@ -117,9 +117,7 @@ u32_t ll_adv_params_set(u16_t interval, u8_t adv_type,
 
 	if (IS_ENABLED(CONFIG_BLUETOOTH_CONTROLLER_CHAN_SEL_2) &&
 	    ((pdu->type == PDU_ADV_TYPE_ADV_IND) ||
-	     (pdu->type == PDU_ADV_TYPE_DIRECT_IND) ||
-	     (IS_ENABLED(CONFIG_BLUETOOTH_CONTROLLER_ADV_EXT) &&
-	      (pdu->type == PDU_ADV_TYPE_EXT_IND)))) {
+	     (pdu->type == PDU_ADV_TYPE_DIRECT_IND))) {
 		pdu->chan_sel = 1;
 	} else {
 		pdu->chan_sel = 0;
@@ -247,10 +245,19 @@ void ll_adv_data_set(u8_t len, u8_t const *const data)
 	struct pdu_adv *pdu;
 	u8_t last;
 
-	/* TODO: dont update data if directed adv type. */
+	/* Dont update data if directed or extended advertising. */
+	radio_adv_data = radio_adv_data_get();
+	prev = (struct pdu_adv *)&radio_adv_data->data[radio_adv_data->last][0];
+	if ((prev->type == PDU_ADV_TYPE_DIRECT_IND) ||
+	    (IS_ENABLED(CONFIG_BLUETOOTH_CONTROLLER_ADV_EXT) &&
+	     (prev->type == PDU_ADV_TYPE_EXT_IND))) {
+		/* TODO: remember data, to be used if type is changed using
+		 * parameter set function ll_adv_params_set afterwards.
+		 */
+		return;
+	}
 
 	/* use the last index in double buffer, */
-	radio_adv_data = radio_adv_data_get();
 	if (radio_adv_data->first == radio_adv_data->last) {
 		last = radio_adv_data->last + 1;
 		if (last == DOUBLE_BUFFER_SIZE) {
@@ -261,15 +268,12 @@ void ll_adv_data_set(u8_t len, u8_t const *const data)
 	}
 
 	/* update adv pdu fields. */
-	prev = (struct pdu_adv *)&radio_adv_data->data[radio_adv_data->last][0];
 	pdu = (struct pdu_adv *)&radio_adv_data->data[last][0];
 	pdu->type = prev->type;
 	pdu->rfu = 0;
 
-	if (IS_ENABLED(CONFIG_BLUETOOTH_CONTROLLER_CHAN_SEL_2) &&
-	    ((pdu->type == PDU_ADV_TYPE_ADV_IND) ||
-	     (pdu->type == PDU_ADV_TYPE_DIRECT_IND))) {
-		pdu->chan_sel = 1;
+	if (IS_ENABLED(CONFIG_BLUETOOTH_CONTROLLER_CHAN_SEL_2)) {
+		pdu->chan_sel = prev->chan_sel;
 	} else {
 		pdu->chan_sel = 0;
 	}
@@ -278,14 +282,8 @@ void ll_adv_data_set(u8_t len, u8_t const *const data)
 	pdu->rx_addr = prev->rx_addr;
 	memcpy(&pdu->payload.adv_ind.addr[0],
 	       &prev->payload.adv_ind.addr[0], BDADDR_SIZE);
-	if (pdu->type == PDU_ADV_TYPE_DIRECT_IND) {
-		memcpy(&pdu->payload.direct_ind.tgt_addr[0],
-		       &prev->payload.direct_ind.tgt_addr[0], BDADDR_SIZE);
-		pdu->len = sizeof(struct pdu_adv_payload_direct_ind);
-	} else {
-		memcpy(&pdu->payload.adv_ind.data[0], data, len);
-		pdu->len = BDADDR_SIZE + len;
-	}
+	memcpy(&pdu->payload.adv_ind.data[0], data, len);
+	pdu->len = BDADDR_SIZE + len;
 
 	/* commit the update so controller picks it. */
 	radio_adv_data->last = last;
