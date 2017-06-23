@@ -1,0 +1,8 @@
+identifier: nrf51_blenano
+name: BLE Nano
+type: mcu
+arch: arm
+toolchain:
+  - zephyr
+  - gccarmemb
+ram: 16
