@@ -4323,19 +4323,25 @@ static void event_stop(u32_t ticks_at_expire, u32_t remainder,
 	LL_ASSERT(!retval);
 }
 
-static void event_common_prepare(u32_t ticks_at_expire,
-				 u32_t remainder,
-				 u32_t *ticks_xtal_to_start,
-				 u32_t *ticks_active_to_start,
-				 u32_t ticks_preempt_to_start,
-				 u8_t ticker_id,
-				 ticker_timeout_func ticker_timeout_fp,
-				 void *context)
+static u32_t event_common_prepare(u32_t ticks_at_expire,
+				  u32_t remainder,
+				  u32_t *ticks_xtal_to_start,
+				  u32_t *ticks_active_to_start,
+				  u32_t ticks_preempt_to_start,
+				  u8_t ticker_id,
+				  ticker_timeout_func ticker_timeout_fp,
+				  void *context)
 {
 	u32_t ticker_status;
 	u32_t _ticks_xtal_to_start = *ticks_xtal_to_start;
 	u32_t _ticks_active_to_start = *ticks_active_to_start;
 	u32_t ticks_to_start;
+
+	/* Check for stale ticks_at_expire */
+	if (ticker_ticks_diff_get(ticker_ticks_now_get(), ticks_at_expire) >
+	    TICKER_US_TO_TICKS(RADIO_TICKER_START_PART_US)) {
+		return 1;
+	}
 
 	/* in case this event is short prepare, xtal to start duration will be
 	 * active to start duration.
@@ -4479,6 +4485,8 @@ static void event_common_prepare(u32_t ticks_at_expire,
 		LL_ASSERT(!retval);
 	}
 #endif /* CONFIG_BLUETOOTH_CONTROLLER_XTAL_ADVANCED */
+
+	return 0;
 }
 
 static u8_t chan_sel_remap(u8_t *chan_map, u8_t chan_index)
@@ -4757,19 +4765,23 @@ static void adv_scan_configure(u8_t phy, u8_t flags)
 void radio_event_adv_prepare(u32_t ticks_at_expire, u32_t remainder,
 			     u16_t lazy, void *context)
 {
+	u32_t err;
+
 	ARG_UNUSED(lazy);
 	ARG_UNUSED(context);
 
 	DEBUG_RADIO_PREPARE_A(1);
 
 	LL_ASSERT(!_radio.ticker_id_prepare);
-	_radio.ticker_id_prepare = RADIO_TICKER_ID_ADV;
 
-	event_common_prepare(ticks_at_expire, remainder,
-			     &_radio.advertiser.hdr.ticks_xtal_to_start,
-			     &_radio.advertiser.hdr.ticks_active_to_start,
-			     _radio.advertiser.hdr.ticks_preempt_to_start,
-			     RADIO_TICKER_ID_ADV, event_adv, NULL);
+	err = event_common_prepare(ticks_at_expire, remainder,
+				   &_radio.advertiser.hdr.ticks_xtal_to_start,
+				   &_radio.advertiser.hdr.ticks_active_to_start,
+				   _radio.advertiser.hdr.ticks_preempt_to_start,
+				   RADIO_TICKER_ID_ADV, event_adv, NULL);
+	if (!err) {
+		_radio.ticker_id_prepare = RADIO_TICKER_ID_ADV;
+	}
 
 	DEBUG_RADIO_PREPARE_A(0);
 }
@@ -4972,19 +4984,25 @@ void event_adv_stop(u32_t ticks_at_expire, u32_t remainder, u16_t lazy,
 static void event_scan_prepare(u32_t ticks_at_expire, u32_t remainder,
 			      u16_t lazy, void *context)
 {
+	u32_t err;
+
 	ARG_UNUSED(lazy);
 	ARG_UNUSED(context);
 
 	DEBUG_RADIO_PREPARE_O(1);
 
 	LL_ASSERT(!_radio.ticker_id_prepare);
-	_radio.ticker_id_prepare = RADIO_TICKER_ID_SCAN;
 
-	event_common_prepare(ticks_at_expire, remainder,
-			     &_radio.scanner.hdr.ticks_xtal_to_start,
-			     &_radio.scanner.hdr.ticks_active_to_start,
-			     _radio.scanner.hdr.ticks_preempt_to_start,
-			     RADIO_TICKER_ID_SCAN, event_scan, NULL);
+	err = event_common_prepare(ticks_at_expire, remainder,
+				   &_radio.scanner.hdr.ticks_xtal_to_start,
+				   &_radio.scanner.hdr.ticks_active_to_start,
+				   _radio.scanner.hdr.ticks_preempt_to_start,
+				   RADIO_TICKER_ID_SCAN, event_scan, NULL);
+	if (err) {
+		goto skip;
+	}
+
+	_radio.ticker_id_prepare = RADIO_TICKER_ID_SCAN;
 
 #if defined(CONFIG_BLUETOOTH_CONTROLLER_SCHED_ADVANCED)
 	/* calc next group in us for the anchor where first connection event
@@ -5021,6 +5039,7 @@ static void event_scan_prepare(u32_t ticks_at_expire, u32_t remainder,
 	}
 #endif /* CONFIG_BLUETOOTH_CONTROLLER_SCHED_ADVANCED */
 
+skip:
 	DEBUG_RADIO_PREPARE_O(0);
 }
 
@@ -6360,10 +6379,9 @@ static void event_connection_prepare(u32_t ticks_at_expire,
 				     struct connection *conn)
 {
 	u16_t event_counter;
+	u32_t err;
 
 	LL_ASSERT(!_radio.ticker_id_prepare);
-	_radio.ticker_id_prepare =
-	    RADIO_TICKER_ID_FIRST_CONNECTION + conn->handle;
 
 	/* Calc window widening */
 	if (conn->role.slave.role != 0) {
@@ -6497,17 +6515,23 @@ static void event_connection_prepare(u32_t ticks_at_expire,
 	}
 #endif /* CONFIG_BLUETOOTH_CONTROLLER_DATA_LENGTH */
 
-	/* Setup XTAL startup and radio active events */
-	event_common_prepare(ticks_at_expire, remainder,
-			     &conn->hdr.ticks_xtal_to_start,
-			     &conn->hdr.ticks_active_to_start,
-			     conn->hdr.ticks_preempt_to_start,
-			     (RADIO_TICKER_ID_FIRST_CONNECTION + conn->handle),
-			     (conn->role.slave.role != 0) ? event_slave : event_master,
-			     conn);
-
 	/* store the next event counter value */
 	conn->event_counter = event_counter + 1;
+
+	/* Setup XTAL startup and radio active events */
+	err = event_common_prepare(ticks_at_expire, remainder,
+				   &conn->hdr.ticks_xtal_to_start,
+				   &conn->hdr.ticks_active_to_start,
+				   conn->hdr.ticks_preempt_to_start,
+				   (RADIO_TICKER_ID_FIRST_CONNECTION +
+				    conn->handle),
+				   (conn->role.slave.role != 0) ? event_slave :
+								  event_master,
+				   conn);
+	if (!err) {
+		_radio.ticker_id_prepare = RADIO_TICKER_ID_FIRST_CONNECTION +
+					   conn->handle;
+	}
 }
 
 static void connection_configure(struct connection *conn)
@@ -8142,7 +8166,7 @@ u32_t radio_adv_enable(u16_t interval, u8_t chl_map, u8_t filter_policy)
 	u32_t ret;
 
 	if (_radio.advertiser.is_enabled) {
-		return 1;
+		return BT_HCI_ERR_CMD_DISALLOWED;
 	}
 
 	pdu_adv = (struct pdu_adv *)
@@ -8153,19 +8177,19 @@ u32_t radio_adv_enable(u16_t interval, u8_t chl_map, u8_t filter_policy)
 		void *link;
 
 		if (_radio.advertiser.conn) {
-			return 1;
+			return BT_HCI_ERR_CMD_DISALLOWED;
 		}
 
 		link = mem_acquire(&_radio.link_rx_free);
 		if (!link) {
-			return 1;
+			return BT_HCI_ERR_MEM_CAPACITY_EXCEEDED;
 		}
 
 		conn = mem_acquire(&_radio.conn_free);
 		if (!conn) {
 			mem_release(link, &_radio.link_rx_free);
 
-			return 1;
+			return BT_HCI_ERR_MEM_CAPACITY_EXCEEDED;
 		}
 
 		conn->handle = 0xFFFF;
@@ -8347,7 +8371,7 @@ failure_cleanup:
 		mem_release(conn, &_radio.conn_free);
 	}
 
-	return 1;
+	return BT_HCI_ERR_CMD_DISALLOWED;
 }
 
 u32_t radio_adv_disable(void)
@@ -8375,7 +8399,7 @@ u32_t radio_adv_disable(void)
 		}
 	}
 
-	return status;
+	return status ? BT_HCI_ERR_CMD_DISALLOWED : 0;
 }
 
 u32_t radio_adv_is_enabled(void)
@@ -8408,7 +8432,7 @@ u32_t radio_scan_enable(u8_t type, u8_t init_addr_type, u8_t *init_addr,
 	u32_t ret;
 
 	if (_radio.scanner.is_enabled) {
-		return 1;
+		return BT_HCI_ERR_CMD_DISALLOWED;
 	}
 
 	_radio.scanner.type = type;
@@ -8479,7 +8503,7 @@ u32_t radio_scan_enable(u8_t type, u8_t init_addr_type, u8_t *init_addr,
 	}
 
 	if (ret_cb != TICKER_STATUS_SUCCESS) {
-		return 1;
+		return BT_HCI_ERR_CMD_DISALLOWED;
 	}
 
 	_radio.scanner.is_enabled = 1;
@@ -8517,7 +8541,7 @@ u32_t radio_scan_disable(void)
 		}
 	}
 
-	return status;
+	return status ? BT_HCI_ERR_CMD_DISALLOWED : 0;
 }
 
 u32_t radio_scan_is_enabled(void)
@@ -8548,22 +8572,19 @@ u32_t radio_connect_enable(u8_t adv_addr_type, u8_t *adv_addr, u16_t interval,
 	void *link;
 
 	if (_radio.scanner.conn) {
-		return 1;
+		return BT_HCI_ERR_CMD_DISALLOWED;
 	}
 
 	link = mem_acquire(&_radio.link_rx_free);
 	if (!link) {
-		return 1;
+		return BT_HCI_ERR_MEM_CAPACITY_EXCEEDED;
 	}
 
 	conn = mem_acquire(&_radio.conn_free);
 	if (!conn) {
 		mem_release(link, &_radio.link_rx_free);
-
-		return 1;
+		return BT_HCI_ERR_MEM_CAPACITY_EXCEEDED;
 	}
-
-	radio_scan_disable();
 
 	_radio.scanner.adv_addr_type = adv_addr_type;
 	memcpy(&_radio.scanner.adv_addr[0], adv_addr, BDADDR_SIZE);
@@ -8684,7 +8705,7 @@ u32_t ll_connect_disable(void)
 	u32_t status;
 
 	if (_radio.scanner.conn == 0) {
-		return 1;
+		return BT_HCI_ERR_CMD_DISALLOWED;
 	}
 
 	status = radio_scan_disable();

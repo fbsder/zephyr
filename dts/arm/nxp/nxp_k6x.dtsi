@@ -106,7 +106,7 @@
 		};
 
 		uart0: uart@4006a000 {
-			compatible = "nxp,k64f-uart";
+			compatible = "nxp,kinetis-uart";
 			reg = <0x4006a000 0x1000>;
 			interrupts = <31 0>, <32 0>;
 			interrupt-names = "status", "error";
@@ -119,7 +119,7 @@
 		};
 
 		uart1: uart@4006b000 {
-			compatible = "nxp,k64f-uart";
+			compatible = "nxp,kinetis-uart";
 			reg = <0x4006b000 0x1000>;
 			interrupts = <33 0>, <34 0>;
 			interrupt-names = "status", "error";
@@ -129,7 +129,7 @@
 		};
 
 		uart2: uart@4006c000 {
-			compatible = "nxp,k64f-uart";
+			compatible = "nxp,kinetis-uart";
 			reg = <0x4006c000 0x1000>;
 			interrupts = <35 0>, <36 0>;
 			interrupt-names = "status", "error";
@@ -139,7 +139,7 @@
 		};
 
 		uart3: uart@4006d000 {
-			compatible = "nxp,k64f-uart";
+			compatible = "nxp,kinetis-uart";
 			reg = <0x4006d000 0x1000>;
 			interrupts = <37 0>, <38 0>;
 			interrupt-names = "status", "error";
@@ -149,7 +149,7 @@
 		};
 
 		uart4: uart@400ea000 {
-			compatible = "nxp,k64f-uart";
+			compatible = "nxp,kinetis-uart";
 			reg = <0x400ea000 0x1000>;
 			interrupts = <66 0>, <67 0>;
 			interrupt-names = "status", "error";
@@ -159,7 +159,7 @@
 		};
 
 		uart5: uart@400eb000 {
-			compatible = "nxp,k64f-uart";
+			compatible = "nxp,kinetis-uart";
 			reg = <0x400eb000 0x1000>;
 			interrupts = <68 0>, <69 0>;
 			interrupt-names = "status", "error";
@@ -169,14 +169,14 @@
 		};
 
 		pinmux_a: pinmux@40049000 {
-			compatible = "nxp,k64f-pinmux";
+			compatible = "nxp,kinetis-pinmux";
 			reg = <0x40049000 0xd0>;
 
 			clocks = <&sim 0x1038 9>;
 		};
 
 		pinmux_b: pinmux@4004a000 {
-			compatible = "nxp,k64f-pinmux";
+			compatible = "nxp,kinetis-pinmux";
 			reg = <0x4004a000 0xd0>;
 
 			clocks = <&sim 0x1038 10>;
@@ -203,25 +203,25 @@
 		};
 
 		pinmux_c: pinmux@4004b000 {
-			compatible = "nxp,k64f-pinmux";
+			compatible = "nxp,kinetis-pinmux";
 			reg = <0x4004b000 0xd0>;
 			clocks = <&sim 0x1038 11>;
 		};
 
 		pinmux_d: pinmux@4004c000 {
-			compatible = "nxp,k64f-pinmux";
+			compatible = "nxp,kinetis-pinmux";
 			reg = <0x4004c000 0xd0>;
 			clocks = <&sim 0x1038 12>;
 		};
 
 		pinmux_e: pinmux@4004d000 {
-			compatible = "nxp,k64f-pinmux";
+			compatible = "nxp,kinetis-pinmux";
 			reg = <0x4004d000 0xd0>;
 			clocks = <&sim 0x1038 13>;
 		};
 
 		gpioa: gpio@400ff000 {
-			compatible = "nxp,k64f-gpio";
+			compatible = "nxp,kinetis-gpio";
 			reg = <0x400ff000 0x40>;
 			interrupts = <59 2>;
 
@@ -230,7 +230,7 @@
 		};
 
 		gpiob: gpio@400ff040 {
-			compatible = "nxp,k64f-gpio";
+			compatible = "nxp,kinetis-gpio";
 			reg = <0x400ff040 0x40>;
 			interrupts = <60 2>;
 
@@ -239,7 +239,7 @@
 		};
 
 		gpioc: gpio@400ff080 {
-			compatible = "nxp,k64f-gpio";
+			compatible = "nxp,kinetis-gpio";
 			reg = <0x400ff080 0x40>;
 			interrupts = <61 2>;
 
@@ -248,7 +248,7 @@
 		};
 
 		gpiod: gpio@400ff0c0 {
-			compatible = "nxp,k64f-gpio";
+			compatible = "nxp,kinetis-gpio";
 			reg = <0x400ff0c0 0x40>;
 			interrupts = <62 2>;
 
@@ -257,7 +257,7 @@
 		};
 
 		gpioe: gpio@400ff100 {
-			compatible = "nxp,k64f-gpio";
+			compatible = "nxp,kinetis-gpio";
 			reg = <0x400ff100 0x40>;
 			interrupts = <63 2>;
 

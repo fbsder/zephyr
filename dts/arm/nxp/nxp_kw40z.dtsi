@@ -45,7 +45,7 @@
 		};
 
 		lpuart0: lpuart@40054000 {
-			compatible = "nxp,kw41z-lpuart";
+			compatible = "nxp,kinetis-lpuart";
 			reg = <0x40054000 0x18>;
 			interrupts = <12 0>;
 			label = "UART_0";
@@ -57,7 +57,7 @@
 		};
 
 		pinmux_a: pinmux@40049000 {
-			compatible = "nxp,kw41z-pinmux";
+			compatible = "nxp,kinetis-pinmux";
 			reg = <0x40049000 0xa4>;
 			clocks = <&sim 0x1038 9>;
 
@@ -70,13 +70,13 @@
 		};
 
 		pinmux_b: pinmux@4004a000 {
-			compatible = "nxp,kw41z-pinmux";
+			compatible = "nxp,kinetis-pinmux";
 			reg = <0x4004a000 0xa4>;
 			clocks = <&sim 0x1038 10>;
 		};
 
 		pinmux_c: pinmux@4004b000 {
-			compatible = "nxp,kw41z-pinmux";
+			compatible = "nxp,kinetis-pinmux";
 			reg = <0x4004b000 0xa4>;
 			clocks = <&sim 0x1038 11>;
 
@@ -110,7 +110,7 @@
 		};
 
 		gpioa: gpio@400ff000 {
-			compatible = "nxp,kw41z-gpio";
+			compatible = "nxp,kinetis-gpio";
 			reg = <0x400ff000 0x40>;
 			interrupts = <30 2>;
 			gpio-controller;
@@ -118,7 +118,7 @@
 		};
 
 		gpiob: gpio@400ff040 {
-			compatible = "nxp,kw41z-gpio";
+			compatible = "nxp,kinetis-gpio";
 			reg = <0x400ff040 0x40>;
 			interrupts = <31 2>;
 			gpio-controller;
@@ -126,7 +126,7 @@
 		};
 
 		gpioc: gpio@400ff080 {
-			compatible = "nxp,kw41z-gpio";
+			compatible = "nxp,kinetis-gpio";
 			reg = <0x400ff080 0x40>;
 			interrupts = <31 2>;
 			gpio-controller;

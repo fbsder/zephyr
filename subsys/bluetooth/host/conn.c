@@ -1103,7 +1103,7 @@ void bt_conn_notify_tx(struct bt_conn *conn)
 	}
 }
 
-static void add_pending_tx(struct bt_conn *conn, bt_conn_tx_cb_t cb)
+static sys_snode_t *add_pending_tx(struct bt_conn *conn, bt_conn_tx_cb_t cb)
 {
 	sys_snode_t *node;
 	unsigned int key;
@@ -1118,6 +1118,19 @@ static void add_pending_tx(struct bt_conn *conn, bt_conn_tx_cb_t cb)
 	key = irq_lock();
 	sys_slist_append(&conn->tx_pending, node);
 	irq_unlock(key);
+
+	return node;
+}
+
+static void remove_pending_tx(struct bt_conn *conn, sys_snode_t *node)
+{
+	unsigned int key;
+
+	key = irq_lock();
+	sys_slist_find_and_remove(&conn->tx_pending, node);
+	irq_unlock(key);
+
+	tx_free(CONTAINER_OF(node, struct bt_conn_tx, node));
 }
 
 static bool send_frag(struct bt_conn *conn, struct net_buf *buf, u8_t flags,
@@ -1125,6 +1138,7 @@ static bool send_frag(struct bt_conn *conn, struct net_buf *buf, u8_t flags,
 {
 	struct bt_hci_acl_hdr *hdr;
 	bt_conn_tx_cb_t cb;
+	sys_snode_t *node;
 	int err;
 
 	BT_DBG("conn %p buf %p len %u flags 0x%02x", conn, buf, buf->len,
@@ -1148,13 +1162,15 @@ static bool send_frag(struct bt_conn *conn, struct net_buf *buf, u8_t flags,
 	cb = conn_tx(buf)->cb;
 	bt_buf_set_type(buf, BT_BUF_ACL_OUT);
 
+	node = add_pending_tx(conn, cb);
+
 	err = bt_send(buf);
 	if (err) {
 		BT_ERR("Unable to send to driver (err %d)", err);
+		remove_pending_tx(conn, node);
 		goto fail;
 	}
 
-	add_pending_tx(conn, cb);
 	return true;
 
 fail:
