@@ -25,7 +25,7 @@
 #include <net/net_context.h>
 #include <net/http.h>
 
-#include <net_sample_app.h>
+#include <net/net_app.h>
 
 #include "config.h"
 
@@ -270,25 +270,7 @@ static int setup_cert(struct http_server_ctx *ctx,
 void main(void)
 {
 	struct sockaddr addr, *server_addr;
-	u32_t flags = 0;
 	int ret;
-
-	/*
-	 * If we have both IPv6 and IPv4 enabled, then set the
-	 * startup flags so that we wait until both are ready
-	 * before continuing.
-	 */
-#if defined(CONFIG_NET_IPV6)
-	flags |= NET_SAMPLE_NEED_IPV6;
-#endif
-#if defined(CONFIG_NET_IPV4)
-	flags |= NET_SAMPLE_NEED_IPV4;
-#endif
-
-	ret = net_sample_app_init(APP_BANNER, flags, APP_STARTUP_TIME);
-	if (ret < 0) {
-		panic("Application init failed");
-	}
 
 	/*
 	 * There are several options here for binding to local address.

@@ -101,6 +101,14 @@
 		KEEP(*(".shell_*"));		\
 		__shell_cmd_end = .;
 
+#ifdef CONFIG_APPLICATION_MEMORY
+#define KERNEL_INPUT_SECTION(sect)	libzephyr.a (sect) kernel/lib.a (sect)
+#define APP_INPUT_SECTION(sect)		EXCLUDE_FILE (*libzephyr.a *kernel/lib.a) *(sect)
+#else
+#define KERNEL_INPUT_SECTION(sect)	*(sect)
+#define APP_INPUT_SECTION(sect)		*(sect)
+#endif
+
 
 #ifdef CONFIG_X86 /* LINKER FILES: defines used by linker script */
 /* Should be moved to linker-common-defs.h */
@@ -136,14 +144,38 @@ GDATA(__data_num_words)
 #else /* ! _ASMLANGUAGE */
 
 #include <zephyr/types.h>
+
+#ifdef CONFIG_APPLICATION_MEMORY
+/* Application memory area bounds */
+extern char __app_ram_start[];
+extern char __app_ram_end[];
+#endif
+
+/* Memory owned by the kernel */
+extern char __kernel_ram_start[];
+extern char __kernel_ram_end[];
+
+/* Used by _bss_zero or arch-specific implementation */
 extern char __bss_start[];
 extern char __bss_end[];
+#ifdef CONFIG_APPLICATION_MEMORY
+extern char __app_bss_start[];
+extern char __app_bss_end[];
+#endif
+
+/* Used by _data_copy() or arch-specific implementation */
 #ifdef CONFIG_XIP
 extern char __data_rom_start[];
 extern char __data_ram_start[];
 extern char __data_ram_end[];
-#endif
+#ifdef CONFIG_APPLICATION_MEMORY
+extern char __app_data_rom_start[];
+extern char __app_data_ram_start[];
+extern char __app_data_ram_end[];
+#endif /* CONFIG_APPLICATION_MEMORY */
+#endif /* CONFIG_XIP */
 
+/* used by mem_safe subsystem */
 extern char _image_rom_start[];
 extern char _image_rom_end[];
 extern char _image_ram_start[];
@@ -151,7 +183,7 @@ extern char _image_ram_end[];
 extern char _image_text_start[];
 extern char _image_text_end[];
 
-/* end address of image. */
+/* end address of image, used by newlib for the heap */
 extern char _end[];
 
 #endif /* ! _ASMLANGUAGE */

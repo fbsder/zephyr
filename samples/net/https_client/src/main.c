@@ -18,7 +18,7 @@
 
 #include <net/http.h>
 
-#include <net_sample_app.h>
+#include <net/net_app.h>
 
 #include "config.h"
 
@@ -369,11 +369,6 @@ void main(void)
 {
 	bool failure = false;
 	int ret;
-
-	ret = net_sample_app_init("Run HTTPS client", 0, APP_STARTUP_TIME);
-	if (ret < 0) {
-		panic("Application init failed");
-	}
 
 	ret = https_client_init(&https_ctx, SERVER_ADDR, SERVER_PORT,
 				(u8_t *)INSTANCE_INFO, strlen(INSTANCE_INFO),

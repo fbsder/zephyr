@@ -18,7 +18,7 @@
 
 #include <net/http.h>
 
-#include <net_sample_app.h>
+#include <net/net_app.h>
 
 #include "config.h"
 
@@ -306,11 +306,6 @@ out:
 void main(void)
 {
 	int ret;
-
-	ret = net_sample_app_init("Run HTTP client", 0, APP_STARTUP_TIME);
-	if (ret < 0) {
-		panic("Application init failed");
-	}
 
 	ret = http_client_init(&http_ctx, SERVER_ADDR, SERVER_PORT);
 	if (ret < 0) {

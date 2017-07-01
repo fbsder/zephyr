@@ -467,7 +467,7 @@ class QEMUHandler(Handler):
 
 class SizeCalculator:
 
-    alloc_sections = ["bss", "noinit"]
+    alloc_sections = ["bss", "noinit", "app_bss", "app_noinit"]
     rw_sections = ["datas", "initlevel", "_k_task_list", "_k_event_list",
                    "_k_memory_pool", "exceptions", "initshell",
 		   "_static_thread_area", "_k_timer_area",
@@ -476,7 +476,7 @@ class SizeCalculator:
 		   "_k_fifo_area", "_k_lifo_area", "_k_stack_area",
 		   "_k_msgq_area", "_k_mbox_area", "_k_pipe_area",
                    "net_if", "net_if_event", "net_stack", "net_l2_data",
-                   "_k_queue_area", "_net_buf_pool_area" ]
+                   "_k_queue_area", "_net_buf_pool_area", "app_datas" ]
     # These get copied into RAM only on non-XIP
     ro_sections = ["text", "ctors", "init_array", "reset",
                    "rodata", "devconfig", "net_l2", "vector"]
@@ -716,7 +716,7 @@ class MakeGenerator:
         if not os.path.exists(outdir):
             os.makedirs(outdir)
 
-    def add_build_goal(self, name, directory, outdir, args):
+    def add_build_goal(self, name, directory, outdir, args, buildlog):
         """Add a goal to invoke a Kbuild session
 
         @param name A unique string name for this build goal. The results
@@ -729,7 +729,7 @@ class MakeGenerator:
             environment variables or specific Make goals
         """
         self._add_goal(outdir)
-        build_logfile = os.path.join(outdir, "build.log")
+        build_logfile = os.path.join(outdir, buildlog)
         text = (self._get_rule_header(name) +
                 self._get_sub_make(name, "building", directory,
                                    outdir, build_logfile, args) +
@@ -813,7 +813,8 @@ class MakeGenerator:
             self.add_unit_goal(ti.name, ti.test.code_location, ti.outdir,
                                args, ti.test.timeout, coverage)
         else:
-            self.add_build_goal(ti.name, ti.test.code_location, ti.outdir, args)
+            self.add_build_goal(ti.name, ti.test.code_location, ti.outdir,
+                    args, "build.log")
 
     def execute(self, callback_fn=None, context=None):
         """Execute all the registered build goals
@@ -927,6 +928,8 @@ testcase_valid_keys = {"tags" : {"type" : "set", "required" : True},
                        "extra_sections" : {"type" : "list", "default" : []},
                        "platform_exclude" : {"type" : "set"},
                        "platform_whitelist" : {"type" : "set"},
+                       "toolchain_exclude" : {"type" : "set"},
+                       "toolchain_whitelist" : {"type" : "set"},
                        "filter" : {"type" : "str"}}
 
 
@@ -1135,6 +1138,8 @@ class TestCase:
         self.skip = tc_dict["skip"]
         self.platform_exclude = tc_dict["platform_exclude"]
         self.platform_whitelist = tc_dict["platform_whitelist"]
+        self.toolchain_exclude = tc_dict["toolchain_exclude"]
+        self.toolchain_whitelist = tc_dict["toolchain_whitelist"]
         self.tc_filter = tc_dict["filter"]
         self.timeout = tc_dict["timeout"]
         self.build_only = tc_dict["build_only"]
@@ -1346,6 +1351,9 @@ class TestSuite:
                     if tc.platform_exclude and plat.name in tc.platform_exclude:
                         continue
 
+                    if tc.toolchain_exclude and toolchain in tc.toolchain_exclude:
+                        continue
+
                     if platform_filter and plat.name not in platform_filter:
                         continue
 
@@ -1364,6 +1372,9 @@ class TestSuite:
                     if tc.platform_whitelist and plat.name not in tc.platform_whitelist:
                         continue
 
+                    if tc.toolchain_whitelist and toolchain not in tc.toolchain_whitelist:
+                        continue
+
                     if (tc.tc_filter and (plat.default or all_plats or platform_filter) and
                         toolchain in plat.supported_toolchains):
                         args = tc.extra_args[:]
@@ -1378,7 +1389,8 @@ class TestSuite:
                         o = os.path.join(self.outdir, plat.name, tc.path)
                         dlist[tc, plat, tc.name.split("/")[-1]] = os.path.join(o,".config-sanitycheck")
                         goal = "_".join([plat.name, "_".join(tc.name.split("/")), "config-sanitycheck"])
-                        mg.add_build_goal(goal, os.path.join(ZEPHYR_BASE, tc.code_location), o, args)
+                        mg.add_build_goal(goal, os.path.join(ZEPHYR_BASE, tc.code_location), o,
+                                args, "config-sanitycheck.log")
 
         info("Building testcase defconfigs...")
         results = mg.execute(defconfig_cb)
@@ -1449,12 +1461,20 @@ class TestSuite:
                         discards[instance] = "In test case platform exclude"
                         continue
 
+                    if tc.toolchain_exclude and toolchain in tc.toolchain_exclude:
+                        discards[instance] = "In test case toolchain exclude"
+                        continue
+
                     if platform_filter and plat.name not in platform_filter:
                         discards[instance] = "Command line platform filter"
                         continue
 
                     if tc.platform_whitelist and plat.name not in tc.platform_whitelist:
                         discards[instance] = "Not in testcase platform whitelist"
+                        continue
+
+                    if tc.toolchain_whitelist and toolchain not in tc.toolchain_whitelist:
+                        discards[instance] = "Not in testcase toolchain whitelist"
                         continue
 
                     if toolchain and toolchain not in plat.supported_toolchains:
