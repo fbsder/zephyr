@@ -78,13 +78,13 @@ struct advertiser {
 	struct shdr hdr;
 
 	u8_t is_enabled:1;
-	u8_t chl_map_current:3;
+	u8_t chan_map_current:3;
 	u8_t rfu:4;
 
 #if defined(CONFIG_BLUETOOTH_CONTROLLER_ADV_EXT)
 	u8_t phy_p:3;
 #endif /* CONFIG_BLUETOOTH_CONTROLLER_ADV_EXT */
-	u8_t chl_map:3;
+	u8_t chan_map:3;
 	u8_t filter_policy:2;
 #if defined(CONFIG_BLUETOOTH_CONTROLLER_PRIVACY)
 	u8_t rl_idx:4;
@@ -502,7 +502,7 @@ static void common_init(void)
 	memq_init(link, &_radio.link_rx_head, (void *)&_radio.link_rx_tail);
 
 	/* initialise advertiser channel map */
-	_radio.advertiser.chl_map = 0x07;
+	_radio.advertiser.chan_map = 0x07;
 
 	/* initialise connection channel map */
 	_radio.data_chan_map[0] = 0xFF;
@@ -713,14 +713,13 @@ static u32_t isr_rx_adv_sr_report(struct pdu_adv *pdu_adv_rx, u8_t rssi_ready)
 #endif /* CONFIG_BLUETOOTH_CONTROLLER_SCAN_REQ_NOTIFY */
 
 static inline bool isr_adv_sr_check(struct pdu_adv *pdu, u8_t devmatch_ok,
-				    u8_t irkmatch_ok, u8_t irkmatch_id)
+				    u8_t rl_idx)
 {
 #if defined(CONFIG_BLUETOOTH_CONTROLLER_PRIVACY)
 	return ((((_radio.advertiser.filter_policy & 0x01) == 0) &&
 		 ctrl_rl_allowed(pdu->tx_addr,
 				 pdu->payload.scan_req.scan_addr)) ||
-		(devmatch_ok) || (ctrl_rl_enabled() && irkmatch_ok &&
-				  ctrl_irk_whitelisted(irkmatch_id))) &&
+		(devmatch_ok) || (ctrl_irk_whitelisted(rl_idx))) &&
 		(1 /** @todo own addr match check */);
 #else
 	return (((_radio.advertiser.filter_policy & 0x01) == 0) ||
@@ -730,11 +729,11 @@ static inline bool isr_adv_sr_check(struct pdu_adv *pdu, u8_t devmatch_ok,
 }
 
 static inline bool isr_adv_tgta_check(struct pdu_adv *adv, struct pdu_adv *ci,
-				      u8_t irkmatch_ok, u8_t irkmatch_id)
+				      u8_t rl_idx)
 {
 #if defined(CONFIG_BLUETOOTH_CONTROLLER_PRIVACY)
-	if (ctrl_rl_enabled() && irkmatch_ok) {
-		return ctrl_rl_idx_match(irkmatch_id, _radio.advertiser.rl_idx);
+	if (rl_idx != RL_IDX_NONE) {
+		return rl_idx == _radio.advertiser.rl_idx;
 	}
 #endif
 	return !memcmp(adv->payload.direct_ind.tgt_addr,
@@ -743,31 +742,29 @@ static inline bool isr_adv_tgta_check(struct pdu_adv *adv, struct pdu_adv *ci,
 
 static inline bool isr_adv_ci_direct_check(struct pdu_adv *adv,
 					   struct pdu_adv *ci,
-					   u8_t irkmatch_ok, u8_t irkmatch_id)
+					   u8_t rl_idx)
 {
 	return ((adv->type != PDU_ADV_TYPE_DIRECT_IND) ||
 		((adv->tx_addr == ci->rx_addr) &&
 		 (adv->rx_addr == ci->tx_addr) &&
 		 !memcmp(adv->payload.direct_ind.adv_addr,
 			 ci->payload.connect_ind.adv_addr, BDADDR_SIZE) &&
-		 isr_adv_tgta_check(adv, ci, irkmatch_ok, irkmatch_id)));
+		 isr_adv_tgta_check(adv, ci, rl_idx)));
 }
 
 static inline bool isr_adv_ci_check(struct pdu_adv *adv, struct pdu_adv *ci,
-				    u8_t devmatch_ok, u8_t irkmatch_ok,
-				    u8_t irkmatch_id)
+				    u8_t devmatch_ok, u8_t rl_idx)
 {
 #if defined(CONFIG_BLUETOOTH_CONTROLLER_PRIVACY)
 	return ((((_radio.advertiser.filter_policy & 0x02) == 0) &&
 		 ctrl_rl_allowed(ci->tx_addr,
 				 ci->payload.connect_ind.init_addr)) ||
-		(devmatch_ok) || (ctrl_rl_enabled() && irkmatch_ok &&
-				  ctrl_irk_whitelisted(irkmatch_id))) &&
-	       isr_adv_ci_direct_check(adv, ci, irkmatch_ok, irkmatch_id);
+		(devmatch_ok) || (ctrl_irk_whitelisted(rl_idx))) &&
+	       isr_adv_ci_direct_check(adv, ci, rl_idx);
 #else
 	return (((_radio.advertiser.filter_policy & 0x02) == 0) ||
 		(devmatch_ok)) &&
-	       isr_adv_ci_direct_check(adv, ci, irkmatch_ok, irkmatch_id);
+	       isr_adv_ci_direct_check(adv, ci, rl_idx);
 #endif
 }
 
@@ -777,14 +774,19 @@ static inline u32_t isr_rx_adv(u8_t devmatch_ok, u8_t devmatch_id,
 {
 	struct pdu_adv *pdu_adv, *_pdu_adv;
 	struct radio_pdu_node_rx *radio_pdu_node_rx;
-
+#if defined(CONFIG_BLUETOOTH_CONTROLLER_PRIVACY)
+	/* An IRK match implies address resolution enabled */
+	u8_t rl_idx = irkmatch_ok ? ctrl_rl_idx(irkmatch_id) : RL_IDX_NONE;
+#else
+	u8_t rl_idx = RL_IDX_NONE;
+#endif
 	pdu_adv = (struct pdu_adv *)radio_pkt_scratch_get();
 	_pdu_adv = (struct pdu_adv *)&_radio.advertiser.adv_data.data
 		[_radio.advertiser.adv_data.first][0];
 
 	if ((pdu_adv->type == PDU_ADV_TYPE_SCAN_REQ) &&
 	    (pdu_adv->len == sizeof(struct pdu_adv_payload_scan_req)) &&
-	    isr_adv_sr_check(pdu_adv, devmatch_ok, irkmatch_ok, irkmatch_id)) {
+	    isr_adv_sr_check(pdu_adv, devmatch_ok, rl_idx)) {
 
 #if defined(CONFIG_BLUETOOTH_CONTROLLER_SCAN_REQ_NOTIFY)
 		if (!IS_ENABLED(CONFIG_BLUETOOTH_CONTROLLER_ADV_EXT) ||
@@ -810,8 +812,7 @@ static inline u32_t isr_rx_adv(u8_t devmatch_ok, u8_t devmatch_id,
 		return 0;
 	} else if ((pdu_adv->type == PDU_ADV_TYPE_CONNECT_IND) &&
 		   (pdu_adv->len == sizeof(struct pdu_adv_payload_connect_ind)) &&
-		   isr_adv_ci_check(_pdu_adv, pdu_adv, devmatch_ok, irkmatch_ok,
-				    irkmatch_id) &&
+		   isr_adv_ci_check(_pdu_adv, pdu_adv, devmatch_ok, rl_idx) &&
 		   ((_radio.fc_ena == 0) || (_radio.fc_req == _radio.fc_ack)) &&
 		   (_radio.advertiser.conn)) {
 		struct radio_le_conn_cmplt *radio_le_conn_cmplt;
@@ -2873,7 +2874,7 @@ static inline u32_t isr_close_adv(void)
 	u32_t dont_close = 0;
 
 	if ((_radio.state == STATE_CLOSE) &&
-	    (_radio.advertiser.chl_map_current != 0)) {
+	    (_radio.advertiser.chan_map_current != 0)) {
 		dont_close = 1;
 
 		adv_setup();
@@ -4930,14 +4931,14 @@ static void adv_setup(void)
 		radio_switch_complete_and_disable();
 	}
 
-	bitmap = _radio.advertiser.chl_map_current;
+	bitmap = _radio.advertiser.chan_map_current;
 	chan = 0;
 	while ((bitmap & 0x01) == 0) {
 		chan++;
 		bitmap >>= 1;
 	}
-	_radio.advertiser.chl_map_current &=
-		(_radio.advertiser.chl_map_current - 1);
+	_radio.advertiser.chan_map_current &=
+		(_radio.advertiser.chan_map_current - 1);
 
 	chan_set(37 + chan);
 }
@@ -4971,7 +4972,7 @@ static void event_adv(u32_t ticks_at_expire, u32_t remainder,
 	adv_scan_configure(0, 0);
 #endif /* !CONFIG_BLUETOOTH_CONTROLLER_ADV_EXT */
 
-	_radio.advertiser.chl_map_current = _radio.advertiser.chl_map;
+	_radio.advertiser.chan_map_current = _radio.advertiser.chan_map;
 	adv_setup();
 
 #if defined(CONFIG_BLUETOOTH_CONTROLLER_PRIVACY)
@@ -8248,10 +8249,10 @@ role_disable_cleanup:
 }
 
 #if defined(CONFIG_BLUETOOTH_CONTROLLER_ADV_EXT)
-u32_t radio_adv_enable(u8_t phy_p, u16_t interval, u8_t chl_map,
+u32_t radio_adv_enable(u8_t phy_p, u16_t interval, u8_t chan_map,
 		       u8_t filter_policy, u8_t rl_idx)
 #else /* !CONFIG_BLUETOOTH_CONTROLLER_ADV_EXT */
-u32_t radio_adv_enable(u16_t interval, u8_t chl_map, u8_t filter_policy,
+u32_t radio_adv_enable(u16_t interval, u8_t chan_map, u8_t filter_policy,
 		       u8_t rl_idx)
 #endif /* !CONFIG_BLUETOOTH_CONTROLLER_ADV_EXT */
 {
@@ -8259,6 +8260,8 @@ u32_t radio_adv_enable(u16_t interval, u8_t chl_map, u8_t filter_policy,
 	u32_t ticks_slot_offset;
 	struct connection *conn;
 	struct pdu_adv *pdu_adv;
+	u16_t ticks_slot;
+	u8_t chan_cnt;
 	u32_t ret;
 
 	if (_radio.advertiser.is_enabled) {
@@ -8373,7 +8376,7 @@ u32_t radio_adv_enable(u16_t interval, u8_t chl_map, u8_t filter_policy,
 	_radio.advertiser.phy_p = phy_p;
 #endif /* CONFIG_BLUETOOTH_CONTROLLER_ADV_EXT */
 
-	_radio.advertiser.chl_map = chl_map;
+	_radio.advertiser.chan_map = chan_map;
 	_radio.advertiser.filter_policy = filter_policy;
 #if defined(CONFIG_BLUETOOTH_CONTROLLER_PRIVACY)
 	_radio.advertiser.rl_idx = rl_idx;
@@ -8387,10 +8390,21 @@ u32_t radio_adv_enable(u16_t interval, u8_t chl_map, u8_t filter_policy,
 		TICKER_US_TO_TICKS(RADIO_TICKER_XTAL_OFFSET_US);
 	_radio.advertiser.hdr.ticks_preempt_to_start =
 		TICKER_US_TO_TICKS(RADIO_TICKER_PREEMPT_PART_MIN_US);
-	_radio.advertiser.hdr.ticks_slot =
-		TICKER_US_TO_TICKS(RADIO_TICKER_START_PART_US +
-		/* Max. chain is ADV_IND + SCAN_REQ + SCAN_RESP */
-		((376 + 150 + 176 + 150 + 376) * 3));
+
+	chan_cnt = util_ones_count_get(&chan_map, sizeof(chan_map));
+
+	if (pdu_adv->type == PDU_ADV_TYPE_DIRECT_IND) {
+		/* Max. chain is DIRECT_IND * channels + CONNECT_IND */
+		ticks_slot = ((RADIO_TICKER_START_PART_US + 176 + 152 + 40) *
+			      chan_cnt) - 40 + 352;
+	} else if (pdu_adv->type == PDU_ADV_TYPE_NONCONN_IND) {
+		ticks_slot = (RADIO_TICKER_START_PART_US + 376) * chan_cnt;
+	} else {
+		/* Max. chain is ADV/SCAN_IND + SCAN_REQ + SCAN_RESP */
+		ticks_slot = (RADIO_TICKER_START_PART_US + 376 + 152 + 176 +
+			      152 + 376) * chan_cnt;
+	}
+	_radio.advertiser.hdr.ticks_slot = TICKER_US_TO_TICKS(ticks_slot);
 
 	ticks_slot_offset =
 		(_radio.advertiser.hdr.ticks_active_to_start <

@@ -59,10 +59,12 @@ static struct k_poll_signal *hbuf_signal;
 static u32_t conn_count;
 #endif
 
-#define DEFAULT_EVENT_MASK    0x1fffffffffff
+#define DEFAULT_EVENT_MASK           0x1fffffffffff
+#define DEFAULT_EVENT_MASK_PAGE_2    0x0
 #define DEFAULT_LE_EVENT_MASK 0x1f
 
 static u64_t event_mask = DEFAULT_EVENT_MASK;
+static u64_t event_mask_page_2 = DEFAULT_EVENT_MASK_PAGE_2;
 static u64_t le_event_mask = DEFAULT_LE_EVENT_MASK;
 
 static void evt_create(struct net_buf *buf, u8_t evt, u8_t len)
@@ -174,6 +176,17 @@ static void set_event_mask(struct net_buf *buf, struct net_buf **evt)
 	ccst->status = 0x00;
 }
 
+static void set_event_mask_page_2(struct net_buf *buf, struct net_buf **evt)
+{
+	struct bt_hci_cp_set_event_mask_page_2 *cmd = (void *)buf->data;
+	struct bt_hci_evt_cc_status *ccst;
+
+	event_mask_page_2 = sys_get_le64(cmd->events_page_2);
+
+	ccst = cmd_complete(evt, sizeof(*ccst));
+	ccst->status = 0x00;
+}
+
 static void reset(struct net_buf *buf, struct net_buf **evt)
 {
 	struct bt_hci_evt_cc_status *ccst;
@@ -183,6 +196,7 @@ static void reset(struct net_buf *buf, struct net_buf **evt)
 #endif
 	/* reset event masks */
 	event_mask = DEFAULT_EVENT_MASK;
+	event_mask_page_2 = DEFAULT_EVENT_MASK_PAGE_2;
 	le_event_mask = DEFAULT_LE_EVENT_MASK;
 
 	if (buf) {
@@ -311,6 +325,10 @@ static int ctrl_bb_cmd_handle(u16_t  ocf, struct net_buf *cmd,
 		reset(cmd, evt);
 		break;
 
+	case BT_OCF(BT_HCI_OP_SET_EVENT_MASK_PAGE_2):
+		set_event_mask_page_2(cmd, evt);
+		break;
+
 #if defined(CONFIG_BLUETOOTH_HCI_ACL_FLOW_CONTROL)
 	case BT_OCF(BT_HCI_OP_SET_CTL_TO_HOST_FLOW):
 		set_ctl_to_host_flow(cmd, evt);
@@ -364,6 +382,8 @@ static void read_supported_commands(struct net_buf *buf, struct net_buf **evt)
 	rp->commands[14] |= BIT(3) | BIT(5);
 	/* Read BD ADDR. */
 	rp->commands[15] |= BIT(1);
+	/* Set Event Mask Page 2 */
+	rp->commands[22] |= BIT(2);
 	/* LE Set Event Mask, LE Read Buffer Size, LE Read Local Supp Feats,
 	 * Set Random Addr
 	 */
@@ -1772,6 +1792,10 @@ static void auth_payload_timeout_exp(struct pdu_data *pdu_data, u16_t handle,
 {
 	struct bt_hci_evt_auth_payload_timeout_exp *ep;
 
+	if (!(event_mask_page_2 & BT_EVT_MASK_AUTH_PAYLOAD_TIMEOUT_EXP)) {
+		return;
+	}
+
 	evt_create(buf, BT_HCI_EVT_AUTH_PAYLOAD_TIMEOUT_EXP, sizeof(*ep));
 	ep = net_buf_add(buf, sizeof(*ep));
 
@@ -2009,6 +2033,7 @@ static void le_unknown_rsp(struct pdu_data *pdu_data, u16_t handle,
 static void remote_version_info(struct pdu_data *pdu_data, u16_t handle,
 				struct net_buf *buf)
 {
+	struct pdu_data_llctrl_version_ind *ver_ind;
 	struct bt_hci_evt_remote_version_info *ep;
 
 	if (!(event_mask & BT_EVT_MASK_REMOTE_VERSION_INFO)) {
@@ -2018,14 +2043,12 @@ static void remote_version_info(struct pdu_data *pdu_data, u16_t handle,
 	evt_create(buf, BT_HCI_EVT_REMOTE_VERSION_INFO, sizeof(*ep));
 	ep = net_buf_add(buf, sizeof(*ep));
 
+	ver_ind = &pdu_data->payload.llctrl.ctrldata.version_ind;
 	ep->status = 0x00;
 	ep->handle = sys_cpu_to_le16(handle);
-	ep->version =
-	      pdu_data->payload.llctrl.ctrldata.version_ind.version_number;
-	ep->manufacturer =
-		pdu_data->payload.llctrl.ctrldata.version_ind.company_id;
-	ep->subversion =
-	      pdu_data->payload.llctrl.ctrldata.version_ind.sub_version_number;
+	ep->version = ver_ind->version_number;
+	ep->manufacturer = sys_cpu_to_le16(ver_ind->company_id);
+	ep->subversion = sys_cpu_to_le16(ver_ind->sub_version_number);
 }
 
 static void le_conn_param_req(struct pdu_data *pdu_data, u16_t handle,

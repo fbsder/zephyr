@@ -535,6 +535,11 @@ struct bt_hci_cp_write_ssp_mode {
 	u8_t mode;
 } __packed;
 
+#define BT_HCI_OP_SET_EVENT_MASK_PAGE_2         BT_OP(BT_OGF_BASEBAND, 0x0063)
+struct bt_hci_cp_set_event_mask_page_2 {
+	u8_t  events_page_2[8];
+} __packed;
+
 #define BT_HCI_OP_LE_WRITE_LE_HOST_SUPP         BT_OP(BT_OGF_BASEBAND, 0x006d)
 struct bt_hci_cp_write_le_host_supp {
 	u8_t  le;
@@ -1323,7 +1328,7 @@ struct bt_hci_evt_remote_version_info {
 	u16_t handle;
 	u8_t  version;
 	u16_t manufacturer;
-	u8_t  subversion;
+	u16_t subversion;
 } __packed;
 
 #define BT_HCI_EVT_CMD_COMPLETE                 0x0e
@@ -1696,6 +1701,33 @@ struct bt_hci_evt_le_chan_sel_algo {
 #define BT_EVT_MASK_SSP_COMPLETE                 BT_EVT_BIT(53)
 #define BT_EVT_MASK_USER_PASSKEY_NOTIFY          BT_EVT_BIT(58)
 #define BT_EVT_MASK_LE_META_EVENT                BT_EVT_BIT(61)
+
+/* Page 2 */
+#define BT_EVT_MASK_PHY_LINK_COMPLETE            BT_EVT_BIT(0)
+#define BT_EVT_MASK_CH_SELECTED_COMPLETE         BT_EVT_BIT(1)
+#define BT_EVT_MASK_DISCONN_PHY_LINK_COMPLETE    BT_EVT_BIT(2)
+#define BT_EVT_MASK_PHY_LINK_LOSS_EARLY_WARN     BT_EVT_BIT(3)
+#define BT_EVT_MASK_PHY_LINK_RECOVERY            BT_EVT_BIT(4)
+#define BT_EVT_MASK_LOG_LINK_COMPLETE            BT_EVT_BIT(5)
+#define BT_EVT_MASK_DISCONN_LOG_LINK_COMPLETE    BT_EVT_BIT(6)
+#define BT_EVT_MASK_FLOW_SPEC_MODIFY_COMPLETE    BT_EVT_BIT(7)
+#define BT_EVT_MASK_NUM_COMPLETE_DATA_BLOCKS     BT_EVT_BIT(8)
+#define BT_EVT_MASK_AMP_START_TEST               BT_EVT_BIT(9)
+#define BT_EVT_MASK_AMP_TEST_END                 BT_EVT_BIT(10)
+#define BT_EVT_MASK_AMP_RX_REPORT                BT_EVT_BIT(11)
+#define BT_EVT_MASK_AMP_SR_MODE_CHANGE_COMPLETE  BT_EVT_BIT(12)
+#define BT_EVT_MASK_AMP_STATUS_CHANGE            BT_EVT_BIT(13)
+#define BT_EVT_MASK_TRIGG_CLOCK_CAPTURE          BT_EVT_BIT(14)
+#define BT_EVT_MASK_SYNCH_TRAIN_COMPLETE         BT_EVT_BIT(15)
+#define BT_EVT_MASK_SYNCH_TRAIN_RX               BT_EVT_BIT(16)
+#define BT_EVT_MASK_CL_SLAVE_BC_RX               BT_EVT_BIT(17)
+#define BT_EVT_MASK_CL_SLAVE_BC_TIMEOUT          BT_EVT_BIT(18)
+#define BT_EVT_MASK_TRUNC_PAGE_COMPLETE          BT_EVT_BIT(19)
+#define BT_EVT_MASK_SLAVE_PAGE_RSP_TIMEOUT       BT_EVT_BIT(20)
+#define BT_EVT_MASK_CL_SLAVE_BC_CH_MAP_CHANGE    BT_EVT_BIT(21)
+#define BT_EVT_MASK_INQUIRY_RSP_NOT              BT_EVT_BIT(22)
+#define BT_EVT_MASK_AUTH_PAYLOAD_TIMEOUT_EXP     BT_EVT_BIT(23)
+#define BT_EVT_MASK_SAM_STATUS_CHANGE            BT_EVT_BIT(24)
 
 #define BT_EVT_MASK_LE_CONN_COMPLETE             BT_EVT_BIT(0)
 #define BT_EVT_MASK_LE_ADVERTISING_REPORT        BT_EVT_BIT(1)
