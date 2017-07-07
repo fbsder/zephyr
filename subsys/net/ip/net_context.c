@@ -82,6 +82,32 @@ static enum net_verdict packet_received(struct net_conn *conn,
 static void set_appdata_values(struct net_pkt *pkt, enum net_ip_protocol proto);
 
 #if defined(CONFIG_NET_TCP)
+static int send_reset(struct net_context *context, struct sockaddr *remote);
+
+static struct tcp_backlog_entry {
+	struct net_tcp *tcp;
+	struct sockaddr remote;
+	u32_t recv_max_ack;
+	u32_t send_seq;
+	u32_t send_ack;
+	struct k_delayed_work ack_timer;
+	bool cancelled;
+} tcp_backlog[CONFIG_NET_TCP_BACKLOG_SIZE];
+
+static void backlog_ack_timeout(struct k_work *work)
+{
+	struct tcp_backlog_entry *backlog =
+		CONTAINER_OF(work, struct tcp_backlog_entry, ack_timer);
+
+	if (!backlog->cancelled) {
+		NET_DBG("Did not receive ACK in %dms", ACK_TIMEOUT);
+
+		send_reset(backlog->tcp->context, &backlog->remote);
+	}
+
+	memset(backlog, 0, sizeof(struct tcp_backlog_entry));
+}
+
 static struct sockaddr *create_sockaddr(struct net_pkt *pkt,
 					struct sockaddr *addr)
 {
@@ -108,6 +134,157 @@ static struct sockaddr *create_sockaddr(struct net_pkt *pkt,
 
 	return addr;
 }
+
+static int tcp_backlog_find(struct net_pkt *pkt, int *empty_slot)
+{
+	int i, empty = -1;
+
+	for (i = 0; i < CONFIG_NET_TCP_BACKLOG_SIZE; i++) {
+		if (tcp_backlog[i].tcp == NULL && empty < 0) {
+			empty = i;
+			continue;
+		}
+
+		if (net_pkt_family(pkt) != tcp_backlog[i].remote.family) {
+			continue;
+		}
+
+		switch (net_pkt_family(pkt)) {
+#if defined(CONFIG_NET_IPV6)
+		case AF_INET6:
+			if (net_sin6(&tcp_backlog[i].remote)->sin6_port !=
+			    NET_TCP_HDR(pkt)->src_port) {
+				continue;
+			}
+
+			if (memcmp(&net_sin6(&tcp_backlog[i].remote)->sin6_addr,
+				   &NET_IPV6_HDR(pkt)->src,
+				   sizeof(struct in6_addr))) {
+				continue;
+			}
+
+			break;
+#endif
+#if defined(CONFIG_NET_IPV4)
+		case AF_INET:
+			if (net_sin(&tcp_backlog[i].remote)->sin_port !=
+			    NET_TCP_HDR(pkt)->src_port) {
+				continue;
+			}
+
+			if (memcmp(&net_sin(&tcp_backlog[i].remote)->sin_addr,
+				   &NET_IPV4_HDR(pkt)->src,
+				   sizeof(struct in_addr))) {
+				continue;
+			}
+
+			break;
+#endif
+		}
+
+		return i;
+	}
+
+	if (empty_slot) {
+		*empty_slot = empty;
+	}
+
+	return -EADDRNOTAVAIL;
+}
+
+static int tcp_backlog_syn(struct net_pkt *pkt, struct net_context *context)
+{
+	int empty_slot = -1;
+
+	if (tcp_backlog_find(pkt, &empty_slot) >= 0) {
+		return -EADDRINUSE;
+	}
+
+	if (empty_slot < 0) {
+		return -ENOSPC;
+	}
+
+	tcp_backlog[empty_slot].tcp = context->tcp;
+
+	create_sockaddr(pkt, &tcp_backlog[empty_slot].remote);
+
+	tcp_backlog[empty_slot].recv_max_ack = context->tcp->recv_max_ack;
+	tcp_backlog[empty_slot].send_seq = context->tcp->send_seq;
+	tcp_backlog[empty_slot].send_ack = context->tcp->send_ack;
+
+	k_delayed_work_init(&tcp_backlog[empty_slot].ack_timer,
+			    backlog_ack_timeout);
+	k_delayed_work_submit(&tcp_backlog[empty_slot].ack_timer, ACK_TIMEOUT);
+
+	return 0;
+}
+
+static int tcp_backlog_ack(struct net_pkt *pkt, struct net_context *context)
+{
+	int r;
+
+	r = tcp_backlog_find(pkt, NULL);
+
+	if (r < 0) {
+		return r;
+	}
+
+	/* Sent SEQ + 1 needs to be the same as the received ACK */
+	if (tcp_backlog[r].send_seq + 1
+	    != sys_get_be32(NET_TCP_HDR(pkt)->ack)) {
+		return -EINVAL;
+	}
+
+	memcpy(&context->remote, &tcp_backlog[r].remote,
+		sizeof(struct sockaddr));
+	context->tcp->recv_max_ack = tcp_backlog[r].recv_max_ack;
+	context->tcp->send_seq = tcp_backlog[r].send_seq;
+	context->tcp->send_ack = tcp_backlog[r].send_ack;
+
+	/* For now, remember to check that the delayed work wasn't already
+	 * scheduled to run, and if yes, don't zero out here. Improve the
+	 * delayed work cancellation, but for now use a boolean to keep this
+	 * in sync
+	 */
+	if (k_delayed_work_remaining_get(&tcp_backlog[r].ack_timer) > 0) {
+		tcp_backlog[r].cancelled = true;
+	} else {
+		k_delayed_work_cancel(&tcp_backlog[r].ack_timer);
+		memset(&tcp_backlog[r], 0, sizeof(struct tcp_backlog_entry));
+	}
+
+	return 0;
+}
+
+static int tcp_backlog_rst(struct net_pkt *pkt)
+{
+	int r;
+
+	r = tcp_backlog_find(pkt, NULL);
+	if (r < 0) {
+		return r;
+	}
+
+	/* The ACK sent needs to be the same as the received SEQ */
+	if (tcp_backlog[r].send_ack != sys_get_be32(NET_TCP_HDR(pkt)->seq)) {
+		return -EINVAL;
+	}
+
+	/* For now, remember to check that the delayed work wasn't already
+	 * scheduled to run, and if yes, don't zero out here. Improve the
+	 * delayed work cancellation, but for now use a boolean to keep this
+	 * in sync
+	 */
+	if (k_delayed_work_remaining_get(&tcp_backlog[r].ack_timer) > 0) {
+		tcp_backlog[r].cancelled = true;
+	} else {
+		k_delayed_work_cancel(&tcp_backlog[r].ack_timer);
+		memset(&tcp_backlog[r], 0, sizeof(struct tcp_backlog_entry));
+	}
+
+	return 0;
+}
+
 #endif
 
 static int check_used_port(enum net_ip_protocol ip_proto,
@@ -388,6 +565,7 @@ int net_context_unref(struct net_context *context)
 #if defined(CONFIG_NET_TCP)
 	if (context->tcp) {
 		net_tcp_release(context->tcp);
+		context->tcp = NULL;
 	}
 #endif /* CONFIG_NET_TCP */
 
@@ -1243,34 +1421,6 @@ static void ack_timer_cancel(struct net_tcp *tcp)
 	k_delayed_work_cancel(&tcp->ack_timer);
 }
 
-static void ack_timeout(struct k_work *work)
-{
-	/* This means that we did not receive ACK response in time. */
-	struct net_tcp *tcp = CONTAINER_OF(work, struct net_tcp, ack_timer);
-
-	if (tcp->ack_timer_cancelled) {
-		return;
-	}
-
-	NET_DBG("Did not receive ACK in %dms while in %s", ACK_TIMEOUT,
-		net_tcp_state_str(net_tcp_get_state(tcp)));
-
-	if (net_tcp_get_state(tcp) == NET_TCP_LAST_ACK) {
-		/* We did not receive the last ACK on time. We can only
-		 * close the connection at this point. We will not send
-		 * anything to peer in this last state, but will go directly
-		 * to to CLOSED state.
-		 */
-		net_tcp_change_state(tcp, NET_TCP_CLOSED);
-
-		net_context_unref(tcp->context);
-	} else {
-		send_reset(tcp->context, &tcp->context->remote);
-
-		net_tcp_change_state(tcp, NET_TCP_LISTEN);
-	}
-}
-
 static void pkt_get_sockaddr(sa_family_t family, struct net_pkt *pkt,
 			     struct sockaddr_ptr *addr)
 {
@@ -1347,6 +1497,7 @@ NET_CONN_CB(tcp_syn_rcvd)
 	 */
 	if (NET_TCP_FLAGS(pkt) == NET_TCP_SYN) {
 		struct sockaddr peer, *remote;
+		int r;
 
 		net_tcp_print_recv_info("SYN", pkt, NET_TCP_HDR(pkt)->src_port);
 
@@ -1354,57 +1505,44 @@ NET_CONN_CB(tcp_syn_rcvd)
 
 		remote = create_sockaddr(pkt, &peer);
 
-		/* FIXME: Is this the correct place to set tcp->send_ack? */
+		/* Set TCP seq and ack which are then stored in the backlog */
+		context->tcp->send_seq = tcp_init_isn();
 		context->tcp->send_ack =
 			sys_get_be32(NET_TCP_HDR(pkt)->seq) + 1;
 		context->tcp->recv_max_ack = context->tcp->send_seq + 1;
 
+		r = tcp_backlog_syn(pkt, context);
+		if (r < 0) {
+			if (r == -EADDRINUSE) {
+				NET_DBG("TCP connection already exists");
+			} else {
+				NET_DBG("No free TCP backlog entries");
+			}
+
+			return NET_DROP;
+		}
+
 		pkt_get_sockaddr(net_context_get_family(context),
 				 pkt, &pkt_src_addr);
 		send_syn_ack(context, &pkt_src_addr, remote);
-
-		/* We might be entering this section multiple times
-		 * if the SYN is sent more than once. So we need to cancel
-		 * any pending timers.
-		 */
-		ack_timer_cancel(tcp);
-
-		k_delayed_work_init(&tcp->ack_timer, ack_timeout);
-		k_delayed_work_submit(&tcp->ack_timer, ACK_TIMEOUT);
-
-		tcp->ack_timer_cancelled = false;
 
 		return NET_DROP;
 	}
 
 	/*
 	 * See RFC 793 chapter 3.4 "Reset Processing" and RFC 793, page 65
-	 * for more details. If RST is received in SYN_RCVD state, go back
-	 * to LISTEN state. No other states are valid for this function.
+	 * for more details.
 	 */
 	if (NET_TCP_FLAGS(pkt) == NET_TCP_RST) {
 
-		/* We only accept an RST packet that has valid seq field
-		 * and ignore RST received in LISTEN state.
-		 */
-		if (!net_tcp_validate_seq(tcp, pkt) ||
-		    net_tcp_get_state(tcp) == NET_TCP_LISTEN) {
+		if (tcp_backlog_rst(pkt) < 0) {
 			net_stats_update_tcp_seg_rsterr();
 			return NET_DROP;
 		}
 
 		net_stats_update_tcp_seg_rst();
 
-		ack_timer_cancel(tcp);
-
 		net_tcp_print_recv_info("RST", pkt, NET_TCP_HDR(pkt)->src_port);
-
-		if (net_tcp_get_state(tcp) == NET_TCP_SYN_RCVD) {
-			net_tcp_change_state(tcp, NET_TCP_LISTEN);
-		} else {
-			NET_DBG("TCP socket not in SYN RCVD state, closing");
-			net_tcp_change_state(tcp, NET_TCP_CLOSED);
-		}
 
 		return NET_DROP;
 	}
@@ -1419,15 +1557,6 @@ NET_CONN_CB(tcp_syn_rcvd)
 		struct net_tcp *tmp_tcp;
 		socklen_t addrlen;
 		int ret;
-
-		/* We can only receive ACK if we have already received SYN.
-		 * So if we are not in SYN_RCVD state, then it is an error.
-		 */
-		if (net_tcp_get_state(tcp) != NET_TCP_SYN_RCVD) {
-			ack_timer_cancel(tcp);
-			NET_DBG("Not in SYN_RCVD state, sending RST");
-			goto reset;
-		}
 
 		net_tcp_print_recv_info("ACK", pkt, NET_TCP_HDR(pkt)->src_port);
 
@@ -1447,9 +1576,14 @@ NET_CONN_CB(tcp_syn_rcvd)
 			goto conndrop;
 		}
 
-		new_context->tcp->recv_max_ack = context->tcp->recv_max_ack;
-		new_context->tcp->send_seq = context->tcp->send_seq;
-		new_context->tcp->send_ack = context->tcp->send_ack;
+		ret = tcp_backlog_ack(pkt, new_context);
+		if (ret < 0) {
+			NET_DBG("Cannot find context from TCP backlog");
+
+			net_context_unref(new_context);
+
+			goto conndrop;
+		}
 
 #if defined(CONFIG_NET_IPV6)
 		if (net_context_get_family(context) == AF_INET6) {
