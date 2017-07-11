@@ -229,6 +229,18 @@ struct net_tcp *net_tcp_alloc(struct net_context *context)
 	return &tcp_context[i];
 }
 
+static void ack_timer_cancel(struct net_tcp *tcp)
+{
+	tcp->ack_timer_cancelled = true;
+	k_delayed_work_cancel(&tcp->ack_timer);
+}
+
+static void fin_timer_cancel(struct net_tcp *tcp)
+{
+	tcp->fin_timer_cancelled = true;
+	k_delayed_work_cancel(&tcp->fin_timer);
+}
+
 int net_tcp_release(struct net_tcp *tcp)
 {
 	struct net_pkt *pkt;
@@ -245,10 +257,11 @@ int net_tcp_release(struct net_tcp *tcp)
 		net_pkt_unref(pkt);
 	}
 
-	tcp->ack_timer_cancelled = true;
-	k_delayed_work_cancel(&tcp->ack_timer);
 	k_timer_stop(&tcp->retry_timer);
 	k_sem_reset(&tcp->connect_wait);
+
+	ack_timer_cancel(tcp);
+	fin_timer_cancel(tcp);
 
 	net_tcp_change_state(tcp, NET_TCP_CLOSED);
 	tcp->context = NULL;
@@ -703,21 +716,31 @@ int net_tcp_send_pkt(struct net_pkt *pkt)
 {
 	struct net_context *ctx = net_pkt_context(pkt);
 	struct net_tcp_hdr hdr, *tcp_hdr;
+	bool calc_chksum = false;
 
 	tcp_hdr = net_tcp_get_hdr(pkt, &hdr);
 	if (!tcp_hdr) {
 		return -EINVAL;
 	}
 
-	sys_put_be32(ctx->tcp->send_ack, tcp_hdr->ack);
+	if (sys_get_be32(tcp_hdr->ack) != ctx->tcp->send_ack) {
+		sys_put_be32(ctx->tcp->send_ack, tcp_hdr->ack);
+		calc_chksum = true;
+	}
 
 	/* The data stream code always sets this flag, because
 	 * existing stacks (Linux, anyway) seem to ignore data packets
 	 * without a valid-but-already-transmitted ACK.  But set it
 	 * anyway if we know we need it just to sanify edge cases.
 	 */
-	if (ctx->tcp->sent_ack != ctx->tcp->send_ack) {
+	if (ctx->tcp->sent_ack != ctx->tcp->send_ack &&
+		(tcp_hdr->flags & NET_TCP_ACK) == 0) {
 		tcp_hdr->flags |= NET_TCP_ACK;
+		calc_chksum = true;
+	}
+
+	if (calc_chksum) {
+		net_tcp_set_chksum(pkt, pkt->frags);
 	}
 
 	if (tcp_hdr->flags & NET_TCP_FIN) {
@@ -1028,8 +1051,10 @@ bool net_tcp_validate_seq(struct net_tcp *tcp, struct net_pkt *pkt)
 		return false;
 	}
 
-	return !net_tcp_seq_greater(tcp->send_ack + get_recv_wnd(tcp),
-				    sys_get_be32(tcp_hdr->seq));
+	return (net_tcp_seq_cmp(sys_get_be32(tcp_hdr->seq),
+				tcp->send_ack) >= 0) &&
+		(net_tcp_seq_cmp(sys_get_be32(tcp_hdr->seq),
+				 tcp->send_ack + get_recv_wnd(tcp)) < 0);
 }
 
 struct net_tcp_hdr *net_tcp_get_hdr(struct net_pkt *pkt,

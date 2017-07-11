@@ -39,8 +39,10 @@
 #if defined(CONFIG_NET_TCP_ACK_TIMEOUT)
 #define ACK_TIMEOUT CONFIG_NET_TCP_ACK_TIMEOUT
 #else
-#define ACK_TIMEOUT MSEC_PER_SEC
+#define ACK_TIMEOUT K_SECONDS(1)
 #endif
+
+#define FIN_TIMEOUT K_SECONDS(1)
 
 /* Declares a wrapper function for a net_conn callback that refs the
  * context around the invocation (to protect it from premature
@@ -256,15 +258,15 @@ static int tcp_backlog_ack(struct net_pkt *pkt, struct net_context *context)
 	context->tcp->send_seq = tcp_backlog[r].send_seq;
 	context->tcp->send_ack = tcp_backlog[r].send_ack;
 
-	/* For now, remember to check that the delayed work wasn't already
-	 * scheduled to run, and if yes, don't zero out here. Improve the
-	 * delayed work cancellation, but for now use a boolean to keep this
-	 * in sync
-	 */
-	if (k_delayed_work_remaining_get(&tcp_backlog[r].ack_timer) > 0) {
+	if (k_delayed_work_cancel(&tcp_backlog[r].ack_timer) < 0) {
+		/* Too late to cancel - just set flag for worker.
+		 * TODO: Note that in this case, we can be preempted
+		 * anytime (could have been preempted even before we did
+		 * the check), so access to tcp_backlog should be synchronized
+		 * between this function and worker.
+		 */
 		tcp_backlog[r].cancelled = true;
 	} else {
-		k_delayed_work_cancel(&tcp_backlog[r].ack_timer);
 		memset(&tcp_backlog[r], 0, sizeof(struct tcp_backlog_entry));
 	}
 
@@ -291,22 +293,57 @@ static int tcp_backlog_rst(struct net_pkt *pkt)
 		return -EINVAL;
 	}
 
-	/* For now, remember to check that the delayed work wasn't already
-	 * scheduled to run, and if yes, don't zero out here. Improve the
-	 * delayed work cancellation, but for now use a boolean to keep this
-	 * in sync
-	 */
-	if (k_delayed_work_remaining_get(&tcp_backlog[r].ack_timer) > 0) {
+	if (k_delayed_work_cancel(&tcp_backlog[r].ack_timer) < 0) {
+		/* Too late to cancel - just set flag for worker.
+		 * TODO: Note that in this case, we can be preempted
+		 * anytime (could have been preempted even before we did
+		 * the check), so access to tcp_backlog should be synchronized
+		 * between this function and worker.
+		 */
 		tcp_backlog[r].cancelled = true;
 	} else {
-		k_delayed_work_cancel(&tcp_backlog[r].ack_timer);
 		memset(&tcp_backlog[r], 0, sizeof(struct tcp_backlog_entry));
 	}
 
 	return 0;
 }
 
-#endif
+static void handle_fin_timeout(struct k_work *work)
+{
+	struct net_tcp *tcp =
+		CONTAINER_OF(work, struct net_tcp, fin_timer);
+
+	if (!tcp->fin_timer_cancelled) {
+		NET_DBG("Did not receive FIN in %dms", FIN_TIMEOUT);
+
+		net_context_unref(tcp->context);
+	}
+}
+
+static void handle_ack_timeout(struct k_work *work)
+{
+	/* This means that we did not receive ACK response in time. */
+	struct net_tcp *tcp = CONTAINER_OF(work, struct net_tcp, ack_timer);
+
+	if (tcp->ack_timer_cancelled) {
+		return;
+	}
+
+	NET_DBG("Did not receive ACK in %dms while in %s", ACK_TIMEOUT,
+		net_tcp_state_str(net_tcp_get_state(tcp)));
+
+	if (net_tcp_get_state(tcp) == NET_TCP_LAST_ACK) {
+		/* We did not receive the last ACK on time. We can only
+		 * close the connection at this point. We will not send
+		 * anything to peer in this last state, but will go directly
+		 * to to CLOSED state.
+		 */
+		net_tcp_change_state(tcp, NET_TCP_CLOSED);
+
+		net_context_unref(tcp->context);
+	}
+}
+#endif /* CONFIG_NET_TCP */
 
 static int check_used_port(enum net_ip_protocol ip_proto,
 			   u16_t local_port,
@@ -469,6 +506,11 @@ int net_context_get(sa_family_t family,
 						"Cannot allocate TCP context");
 				return -ENOBUFS;
 			}
+
+			k_delayed_work_init(&contexts[i].tcp->ack_timer,
+					    handle_ack_timeout);
+			k_delayed_work_init(&contexts[i].tcp->fin_timer,
+					    handle_fin_timeout);
 		}
 #endif /* CONFIG_NET_TCP */
 
@@ -632,12 +674,13 @@ int net_context_put(struct net_context *context)
 		if ((net_context_get_state(context) == NET_CONTEXT_CONNECTED ||
 		     net_context_get_state(context) == NET_CONTEXT_LISTENING)
 		    && !context->tcp->fin_rcvd) {
-			if (IS_ENABLED(CONFIG_NET_TCP_TIME_WAIT)) {
-				NET_DBG("TCP connection in active close, not "
-					"disposing yet");
-				queue_fin(context);
-				return 0;
-			}
+			NET_DBG("TCP connection in active close, not "
+				"disposing yet (waiting %dms)", FIN_TIMEOUT);
+			k_delayed_work_submit(&context->tcp->fin_timer,
+					      FIN_TIMEOUT);
+			context->tcp->fin_timer_cancelled = false;
+			queue_fin(context);
+			return 0;
 		}
 	}
 #endif /* CONFIG_NET_TCP */
@@ -1467,12 +1510,6 @@ int net_context_connect(struct net_context *context,
 
 #if defined(CONFIG_NET_TCP)
 
-static void ack_timer_cancel(struct net_tcp *tcp)
-{
-	tcp->ack_timer_cancelled = true;
-	k_delayed_work_cancel(&tcp->ack_timer);
-}
-
 static void pkt_get_sockaddr(sa_family_t family, struct net_pkt *pkt,
 			     struct sockaddr_ptr *addr)
 {
@@ -1744,8 +1781,6 @@ NET_CONN_CB(tcp_syn_rcvd)
 
 		net_tcp_change_state(new_context->tcp, NET_TCP_ESTABLISHED);
 		net_context_set_state(new_context, NET_CONTEXT_CONNECTED);
-
-		ack_timer_cancel(tcp);
 
 		context->tcp->accept_cb(new_context,
 					&new_context->remote,
