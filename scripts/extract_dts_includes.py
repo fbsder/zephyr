@@ -247,7 +247,9 @@ def extract_interrupts(node_address, yaml, y_key, names, defs, def_label):
 
 def extract_reg_prop(node_address, names, defs, def_label, div, post_label):
 
-    props = list(reduced[node_address]['props']['reg'])
+    reg = reduced[node_address]['props']['reg']
+    if type(reg) is not list: reg = [ reg ]
+    props = list(reg)
 
     address_cells = reduced['/']['props'].get('#address-cells')
     size_cells = reduced['/']['props'].get('#size-cells')
@@ -285,15 +287,21 @@ def extract_reg_prop(node_address, names, defs, def_label, div, post_label):
 
         l_addr_fqn = '_'.join(l_base + l_addr + l_idx)
         l_size_fqn = '_'.join(l_base + l_size + l_idx)
-        prop_def[l_addr_fqn] = hex(addr)
-        prop_def[l_size_fqn] = int(size / div)
+        if address_cells:
+            prop_def[l_addr_fqn] = hex(addr)
+        if size_cells:
+            prop_def[l_size_fqn] = int(size / div)
         if len(name):
-            prop_alias['_'.join(l_base + name + l_addr)] = l_addr_fqn
-            prop_alias['_'.join(l_base + name + l_size)] = l_size_fqn
+            if address_cells:
+                prop_alias['_'.join(l_base + name + l_addr)] = l_addr_fqn
+            if size_cells:
+                prop_alias['_'.join(l_base + name + l_size)] = l_size_fqn
 
         if index == 0:
-            prop_alias['_'.join(l_base + l_addr)] = l_addr_fqn
-            prop_alias['_'.join(l_base + l_size)] = l_size_fqn
+            if address_cells:
+                prop_alias['_'.join(l_base + l_addr)] = l_addr_fqn
+            if size_cells:
+                prop_alias['_'.join(l_base + l_size)] = l_size_fqn
 
         insert_defs(node_address, defs, prop_def, prop_alias)
 
@@ -419,6 +427,24 @@ def extract_single(node_address, yaml, prop, key, prefix, defs, def_label):
         if isinstance(prop, str):
             prop = "\"" + prop + "\""
         prop_def[label] = prop
+
+    if node_address in defs:
+        defs[node_address].update(prop_def)
+    else:
+        defs[node_address] = prop_def
+
+    return
+
+
+def extract_string_prop(node_address, yaml, key, label, defs):
+
+    prop_def = {}
+
+    node = reduced[node_address]
+    prop = node['props'][key]
+
+    k = convert_string_to_label(key).upper()
+    prop_def[label] = "\"" + prop + "\""
 
     if node_address in defs:
         defs[node_address].update(prop_def)
@@ -745,6 +771,10 @@ def main():
     if 'zephyr,sram' in chosen:
         extract_reg_prop(chosen['zephyr,sram'], None,
                          defs, "CONFIG_SRAM", 1024, None)
+
+    if 'zephyr,console' in chosen:
+        extract_string_prop(chosen['zephyr,console'], None, "label",
+                            "CONFIG_UART_CONSOLE_ON_DEV_NAME", defs)
 
     # only compute the load offset if a code partition exists and it is not the
     # same as the flash base address

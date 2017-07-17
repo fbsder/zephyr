@@ -43,7 +43,6 @@
 #include <linker/linker-defs.h>
 #include <offsets.h>
 #include <misc/util.h>
-#define MMU_PAGE_SIZE KB(4)
 
 #include <linker/linker-tool.h>
 
@@ -55,6 +54,13 @@
 	#define RAMABLE_REGION RAM
 #endif
 
+#ifdef CONFIG_X86_MMU
+	#define MMU_PAGE_SIZE	KB(4)
+	#define MMU_PAGE_ALIGN	. = ALIGN(MMU_PAGE_SIZE);
+#else
+	#define MMU_PAGE_ALIGN
+#endif
+
 /* SECTIONS definitions */
 SECTIONS
 	{
@@ -62,7 +68,6 @@ SECTIONS
 
 	_image_rom_start = PHYS_LOAD_ADDR;
 	_image_text_start = PHYS_LOAD_ADDR;
-
 
 	SECTION_PROLOGUE(_TEXT_SECTION_NAME, (OPTIONAL),)
 	{
@@ -78,10 +83,10 @@ SECTIONS
 	*(.eini)
 	KEEP(*(.openocd_dbg))
 	KEEP(*(".openocd_dbg.*"))
-	KEXEC_PGALIGN_PAD(MMU_PAGE_SIZE)
 	} GROUP_LINK_IN(ROMABLE_REGION)
 
 	_image_text_end = .;
+	_image_rodata_start = .;
 
 #include <linker/common-rom.ld>
 
@@ -114,11 +119,17 @@ SECTIONS
 #include <custom-rodata.ld>
 #endif
 
-	KEXEC_PGALIGN_PAD(MMU_PAGE_SIZE)
 	} GROUP_LINK_IN(ROMABLE_REGION)
 
-	_image_rom_end = .;
+	_image_rodata_end = .;
 	__data_rom_start = ALIGN(4);		/* XIP imaged DATA ROMABLE_REGION start addr */
+
+	/* This align directive needs to be after __data_rom_start or XIP
+	 * won't be copying the data from the right LMA
+	 */
+	MMU_PAGE_ALIGN
+	_image_rom_end = .;
+	_image_rom_size = _image_rom_end - _image_rom_start;
 
 	GROUP_END(ROMABLE_REGION)
 
@@ -127,7 +138,6 @@ SECTIONS
 
 	SECTION_DATA_PROLOGUE(_DATA_SECTION_NAME, (OPTIONAL),)
 	{
-	KEXEC_PGALIGN_PAD(MMU_PAGE_SIZE)
 	_image_ram_start = .;
 	__kernel_ram_start = .;
 	__data_ram_start = .;
@@ -141,8 +151,8 @@ SECTIONS
 #endif
 
 #ifdef CONFIG_X86_MMU
-       /* Page Tables are located here if MMU is enabled.*/
-	. = ALIGN(4096);
+	/* Page Tables are located here if MMU is enabled.*/
+	MMU_PAGE_ALIGN
 	__mmu_tables_start = .;
 	KEEP(*(.mmu_data));
 	__mmu_tables_end = .;
@@ -168,13 +178,14 @@ SECTIONS
 	KERNEL_INPUT_SECTION(.bss)
 	KERNEL_INPUT_SECTION(".bss.*")
 	KERNEL_INPUT_SECTION(COMMON)
+	*(".kernel_bss.*")
+
 	/*
 	 * As memory is cleared in words only, it is simpler to ensure the BSS
 	 * section ends on a 4 byte boundary. This wastes a maximum of 3 bytes.
 	 */
 	. = ALIGN(4);
 	__bss_end = .;
-	KEXEC_PGALIGN_PAD(MMU_PAGE_SIZE)
 	} GROUP_DATA_LINK_IN(RAMABLE_REGION, RAMABLE_REGION)
 
 	__bss_num_words	= (__bss_end - __bss_start) >> 2;
@@ -187,6 +198,7 @@ SECTIONS
 	 */
 	KERNEL_INPUT_SECTION(.noinit)
 	KERNEL_INPUT_SECTION(".noinit.*")
+	*(".kernel_noinit.*")
 
 	/* All stacks go in kernel's noinit, regardless of where they
 	 * were defined.
@@ -198,6 +210,7 @@ SECTIONS
 	} GROUP_DATA_LINK_IN(RAMABLE_REGION, RAMABLE_REGION)
 
 #ifdef CONFIG_APPLICATION_MEMORY
+	MMU_PAGE_ALIGN
 	SECTION_DATA_PROLOGUE(_APP_DATA_SECTION_NAME, (OPTIONAL),)
 	{
 		__app_ram_start = .;
@@ -231,9 +244,9 @@ SECTIONS
 
 	/* Define linker symbols */
 	_image_ram_end = .;
-	_end = .; /* end of image */
+	_image_ram_all = (PHYS_RAM_ADDR + KB(CONFIG_RAM_SIZE)) - _image_ram_start;
 
-	. = ALIGN(MMU_PAGE_SIZE);
+	_end = .; /* end of image */
 
 	GROUP_END(RAMABLE_REGION)
 

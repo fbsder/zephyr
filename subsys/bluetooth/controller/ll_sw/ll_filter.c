@@ -99,7 +99,7 @@ static u8_t wl_find(u8_t addr_type, u8_t *addr, u8_t *free)
 	for (i = 0; i < WL_SIZE; i++) {
 		if (LIST_MATCH(wl, i, addr_type, addr)) {
 			return i;
-		} else if (free && !rl[i].taken && (*free == FILTER_IDX_NONE)) {
+		} else if (free && !wl[i].taken && (*free == FILTER_IDX_NONE)) {
 			*free = i;
 		}
 	}
@@ -116,7 +116,7 @@ static u32_t wl_add(bt_addr_le_t *id_addr)
 	/* Duplicate  check */
 	if (i < ARRAY_SIZE(wl)) {
 		return BT_HCI_ERR_INVALID_PARAM;
-	} else if (j > ARRAY_SIZE(wl)) {
+	} else if (j >= ARRAY_SIZE(wl)) {
 		return BT_HCI_ERR_MEM_CAPACITY_EXCEEDED;
 	}
 
@@ -239,7 +239,6 @@ bool ctrl_irk_whitelisted(u8_t rl_idx)
 		return false;
 	}
 
-	LL_ASSERT(rl_idx < CONFIG_BLUETOOTH_CONTROLLER_RL_SIZE);
 	LL_ASSERT(rl[rl_idx].taken);
 
 	return rl[rl_idx].wl;
@@ -248,13 +247,14 @@ bool ctrl_irk_whitelisted(u8_t rl_idx)
 
 struct ll_filter *ctrl_filter_get(bool whitelist)
 {
+#if defined(CONFIG_BLUETOOTH_CONTROLLER_PRIVACY)
 	if (whitelist) {
 		return &wl_filter;
 	}
-#if defined(CONFIG_BLUETOOTH_CONTROLLER_PRIVACY)
 	return &rl_filter;
 #else
-	LL_ASSERT(0);
+	LL_ASSERT(whitelist);
+	return &wl_filter;
 #endif
 }
 
@@ -325,9 +325,15 @@ static void filter_wl_update(void)
 	filter_clear(&wl_filter);
 
 	for (i = 0; i < WL_SIZE; i++) {
-		int j = wl[i].rl_idx;
+		int j;
 
-		if (!rl_enable || j < ARRAY_SIZE(rl) || !rl[j].pirk ||
+		if (!wl[i].taken) {
+			continue;
+		}
+
+		j = wl[i].rl_idx;
+
+		if (!rl_enable || j >= ARRAY_SIZE(rl) || !rl[j].pirk ||
 		    rl[j].dev) {
 			filter_insert(&wl_filter, i, wl[i].id_addr_type,
 				      wl[i].id_addr.val);
@@ -343,7 +349,7 @@ static void filter_rl_update(void)
 	filter_clear(&rl_filter);
 
 	for (i = 0; i < CONFIG_BLUETOOTH_CONTROLLER_RL_SIZE; i++) {
-		if (!rl[i].pirk || rl[i].dev) {
+		if (rl[i].taken && (!rl[i].pirk || rl[i].dev)) {
 			filter_insert(&rl_filter, i, rl[i].id_addr_type,
 				      rl[i].id_addr.val);
 		}
@@ -397,11 +403,12 @@ u8_t ll_rl_find(u8_t id_addr_type, u8_t *id_addr, u8_t *free)
 	return FILTER_IDX_NONE;
 }
 
-bool ctrl_rl_allowed(u8_t id_addr_type, u8_t *id_addr)
+bool ctrl_rl_allowed(u8_t id_addr_type, u8_t *id_addr, u8_t *rl_idx)
 {
 	int i, j;
 
-	if (!rl_enable) {
+	/* If AR is disabled or we matched an IRK then we're all set */
+	if (!rl_enable || *rl_idx != FILTER_IDX_NONE) {
 		return true;
 	}
 
@@ -415,12 +422,13 @@ bool ctrl_rl_allowed(u8_t id_addr_type, u8_t *id_addr)
 			}
 
 			if (j == BDADDR_SIZE) {
+				*rl_idx = i;
 				return !rl[i].pirk || rl[i].dev;
 			}
 		}
 	}
 
-	return false;
+	return true;
 }
 
 bool ctrl_rl_enabled(void)
