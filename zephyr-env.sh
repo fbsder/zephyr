@@ -41,7 +41,7 @@ if uname | grep -q "MINGW"; then
 else
     win_build=0
     PWD_OPT=""
-#fi
+fi
 
 # identify OS source tree root directory
 export ZEPHYR_BASE=$( builtin cd "$( dirname "$DIR" )" && pwd ${PWD_OPT})
