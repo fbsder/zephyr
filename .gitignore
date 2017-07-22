@@ -45,3 +45,5 @@ outdir
 .dirstamp
 .DS_Store
 .local-version
+.xxproject
+.envrc

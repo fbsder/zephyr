@@ -2,12 +2,18 @@
 
 / {
 	cpus {
+		#address-cells = <1>;
+		#size-cells = <0>;
+
 		cpu@0 {
+			device_type = "cpu";
 			compatible = "arm,cortex-m4f";
+			reg = <0>;
 		};
 	};
 
-	sram0: memory {
+	sram0: memory@20000000 {
+		device_type = "memory";
 		compatible = "mmio-sram";
 		reg = <0x20000000 0x30000>;
 	};
@@ -65,44 +71,37 @@
 
 			flash0: flash@0 {
 				reg = <0 0x100000>;
-
-				/*
-				 * If chosen's zephyr,code-partition
-				 * is unset, the image will be linked
-				 * into the entire flash device.  If
-				 * it points to an individual
-				 * partition, the code will be linked
-				 * to, and restricted to that
-				 * partition.
-				 */
-				partitions {
-					compatible = "fixed-partitions";
-					#address-cells = <1>;
-					#size-cells = <1>;
-
-					boot_partition: partition@0 {
-						label = "mcuboot";
-						reg = <0x00000000 0x00010000>;
-						read-only;
-					};
-					app_state_partition: partition@10000 {
-						label = "application-state";
-						reg = <0x00010000 0x00010000>;
-					};
-					slot0_partition: partition@20000 {
-						label = "image-0";
-						reg = <0x00020000 0x00060000>;
-					};
-					slot1_partition: partition@80000 {
-						label = "image-1";
-						reg = <0x00080000 0x00060000>;
-					};
-					scratch_partition: partition@e0000 {
-						label = "image-scratch";
-						reg = <0x000e0000 0x00020000>;
-					};
-				};
 			};
+		};
+
+		i2c0: i2c@40066000 {
+			compatible = "nxp,kinetis-i2c";
+			#address-cells = <1>;
+			#size-cells = <0>;
+			reg = <0x40066000 0x1000>;
+			interrupts = <24 0>;
+			label = "I2C_0";
+			status = "disabled";
+		};
+
+		i2c1: i2c@40067000 {
+			compatible = "nxp,kinetis-i2c";
+			#address-cells = <1>;
+			#size-cells = <0>;
+			reg = <0x40067000 0x1000>;
+			interrupts = <25 0>;
+			label = "I2C_1";
+			status = "disabled";
+		};
+
+		i2c2: i2c@400e6000 {
+			compatible = "nxp,kinetis-i2c";
+			#address-cells = <1>;
+			#size-cells = <0>;
+			reg = <0x400e6000 0x1000>;
+			interrupts = <74 0>;
+			label = "I2C_2";
+			status = "disabled";
 		};
 
 		uart0: uart@4006a000 {
@@ -309,6 +308,22 @@
 			period = <1000>;
 			clock-source = <0>;
 			/* channel information needed - fixme */
+		};
+
+		adc0: adc@4003b000{
+			compatible = "nxp,kinetis-adc16";
+			reg = <0x4003b000 0x70>;
+			interrupts = <39 0>;
+			label = "ADC_0";
+			status = "disabled";
+		};
+
+		adc1: adc@400bb000{
+			compatible = "nxp,kinetis-adc16";
+			reg = <0x400bb000 0x70>;
+			interrupts = <73 0>;
+			label = "ADC_1";
+			status = "disabled";
 		};
 	};
 };

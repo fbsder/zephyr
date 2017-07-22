@@ -23,6 +23,7 @@ def convert_string_to_label(s):
     # Transmute ,- to _
     s = s.replace("-", "_")
     s = s.replace(",", "_")
+    s = s.replace("@", "_")
     return s
 
 
@@ -247,7 +248,9 @@ def extract_interrupts(node_address, yaml, y_key, names, defs, def_label):
 
 def extract_reg_prop(node_address, names, defs, def_label, div, post_label):
 
-    props = list(reduced[node_address]['props']['reg'])
+    reg = reduced[node_address]['props']['reg']
+    if type(reg) is not list: reg = [ reg ]
+    props = list(reg)
 
     address_cells = reduced['/']['props'].get('#address-cells')
     size_cells = reduced['/']['props'].get('#size-cells')
@@ -285,15 +288,21 @@ def extract_reg_prop(node_address, names, defs, def_label, div, post_label):
 
         l_addr_fqn = '_'.join(l_base + l_addr + l_idx)
         l_size_fqn = '_'.join(l_base + l_size + l_idx)
-        prop_def[l_addr_fqn] = hex(addr)
-        prop_def[l_size_fqn] = int(size / div)
+        if address_cells:
+            prop_def[l_addr_fqn] = hex(addr)
+        if size_cells:
+            prop_def[l_size_fqn] = int(size / div)
         if len(name):
-            prop_alias['_'.join(l_base + name + l_addr)] = l_addr_fqn
-            prop_alias['_'.join(l_base + name + l_size)] = l_size_fqn
+            if address_cells:
+                prop_alias['_'.join(l_base + name + l_addr)] = l_addr_fqn
+            if size_cells:
+                prop_alias['_'.join(l_base + name + l_size)] = l_size_fqn
 
         if index == 0:
-            prop_alias['_'.join(l_base + l_addr)] = l_addr_fqn
-            prop_alias['_'.join(l_base + l_size)] = l_size_fqn
+            if address_cells:
+                prop_alias['_'.join(l_base + l_addr)] = l_addr_fqn
+            if size_cells:
+                prop_alias['_'.join(l_base + l_size)] = l_size_fqn
 
         insert_defs(node_address, defs, prop_def, prop_alias)
 
@@ -372,6 +381,7 @@ def extract_pinctrl(node_address, yaml, pinconf, names, index, defs,
     for p in prop_list:
         pin_node_address = phandles[p]
         parent_address = '/'.join(pin_node_address.split('/')[:-1])
+        pin_subnode = '/'.join(pin_node_address.split('/')[-1:])
         pin_parent = reduced[parent_address]
         cell_yaml = yaml[get_compat(pin_parent)]
         cell_prefix = cell_yaml.get('cell_string', None)
@@ -381,11 +391,11 @@ def extract_pinctrl(node_address, yaml, pinconf, names, index, defs,
             post_fix.append(cell_prefix)
 
         for subnode in reduced.keys():
-            if pin_node_address in subnode and pin_node_address != subnode:
+            if pin_subnode in subnode and pin_node_address != subnode:
                 # found a subnode underneath the pinmux handle
                 pin_label = def_prefix + post_fix + subnode.split('/')[-2:]
 
-                for i, pin in enumerate(reduced[subnode]['props']['pins']):
+                for i, cells in enumerate(reduced[subnode]['props']):
                     key_label = list(pin_label) + \
                         [cell_yaml['#cells'][0]] + [str(i)]
                     func_label = key_label[:-2] + \
@@ -395,9 +405,9 @@ def extract_pinctrl(node_address, yaml, pinconf, names, index, defs,
                     func_label = convert_string_to_label(
                         '_'.join(func_label)).upper()
 
-                    prop_def[key_label] = pin
+                    prop_def[key_label] = cells
                     prop_def[func_label] = \
-                        reduced[subnode]['props']['function']
+                        reduced[subnode]['props'][cells]
 
     insert_defs(node_address, defs, prop_def, {})
 
@@ -428,6 +438,24 @@ def extract_single(node_address, yaml, prop, key, prefix, defs, def_label):
     return
 
 
+def extract_string_prop(node_address, yaml, key, label, defs):
+
+    prop_def = {}
+
+    node = reduced[node_address]
+    prop = node['props'][key]
+
+    k = convert_string_to_label(key).upper()
+    prop_def[label] = "\"" + prop + "\""
+
+    if node_address in defs:
+        defs[node_address].update(prop_def)
+    else:
+        defs[node_address] = prop_def
+
+    return
+
+
 def extract_property(node_compat, yaml, node_address, y_key, y_val, names,
                      prefix, defs, label_override):
 
@@ -435,7 +463,10 @@ def extract_property(node_compat, yaml, node_address, y_key, y_val, names,
         def_label = yaml[node_compat].get('base_label')
     else:
         def_label = convert_string_to_label(node_compat.upper())
-        def_label += '_' + node_address.split('@')[-1].upper()
+        if '@' in node_address:
+            def_label += '_' + node_address.split('@')[-1].upper()
+        else:
+            def_label += convert_string_to_label(node_address.upper())
 
     if label_override is not None:
         def_label += '_' + label_override
@@ -745,6 +776,22 @@ def main():
     if 'zephyr,sram' in chosen:
         extract_reg_prop(chosen['zephyr,sram'], None,
                          defs, "CONFIG_SRAM", 1024, None)
+
+    if 'zephyr,console' in chosen:
+        extract_string_prop(chosen['zephyr,console'], None, "label",
+                            "CONFIG_UART_CONSOLE_ON_DEV_NAME", defs)
+
+    if 'zephyr,bt-uart' in chosen:
+       extract_string_prop(chosen['zephyr,bt-uart'], None, "label",
+                           "CONFIG_BLUETOOTH_UART_ON_DEV_NAME", defs)
+
+    if 'zephyr,uart-pipe' in chosen:
+       extract_string_prop(chosen['zephyr,uart-pipe'], None, "label",
+                           "CONFIG_UART_PIPE_ON_DEV_NAME", defs)
+
+    if 'zephyr,bt-mon-uart' in chosen:
+       extract_string_prop(chosen['zephyr,bt-mon-uart'], None, "label",
+                           "CONFIG_BLUETOOTH_MONITOR_ON_DEV_NAME", defs)
 
     # only compute the load offset if a code partition exists and it is not the
     # same as the flash base address

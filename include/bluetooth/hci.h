@@ -125,6 +125,10 @@ static inline bool bt_addr_le_is_identity(const bt_addr_le_t *addr)
 #define BT_DATA_SOLICIT32               0x1f /* Solicit UUIDs, 32-bit */
 #define BT_DATA_SVC_DATA32              0x20 /* Service data, 32-bit UUID */
 #define BT_DATA_SVC_DATA128             0x21 /* Service data, 128-bit UUID */
+#define BT_DATA_MESH_PROV               0x29 /* Mesh Provisioning PDU */
+#define BT_DATA_MESH_MESSAGE            0x2a /* Mesh Networking PDU */
+#define BT_DATA_MESH_BEACON             0x2b /* Mesh Beacon */
+
 #define BT_DATA_MANUFACTURER_DATA       0xff /* Manufacturer Specific Data */
 
 #define BT_LE_AD_LIMITED                0x01 /* Limited Discoverable */
@@ -549,6 +553,28 @@ struct bt_hci_cp_write_le_host_supp {
 #define BT_HCI_OP_WRITE_SC_HOST_SUPP            BT_OP(BT_OGF_BASEBAND, 0x007a)
 struct bt_hci_cp_write_sc_host_supp {
 	u8_t  sc_support;
+} __packed;
+
+#define BT_HCI_OP_READ_AUTH_PAYLOAD_TIMEOUT     BT_OP(BT_OGF_BASEBAND, 0x007b)
+struct bt_hci_cp_read_auth_payload_timeout {
+	u16_t handle;
+} __packed;
+
+struct bt_hci_rp_read_auth_payload_timeout {
+	u8_t  status;
+	u16_t handle;
+	u16_t auth_payload_timeout;
+} __packed;
+
+#define BT_HCI_OP_WRITE_AUTH_PAYLOAD_TIMEOUT    BT_OP(BT_OGF_BASEBAND, 0x007c)
+struct bt_hci_cp_write_auth_payload_timeout {
+	u16_t handle;
+	u16_t auth_payload_timeout;
+} __packed;
+
+struct bt_hci_rp_write_auth_payload_timeout {
+	u8_t  status;
+	u16_t handle;
 } __packed;
 
 /* HCI version from Assigned Numbers */

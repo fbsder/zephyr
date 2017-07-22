@@ -15,8 +15,16 @@ config HAS_DTS
 	This option specifies that the target platform supports device tree
 	configuration.
 
+config HAS_DTS_ADC
+	bool "ADC uses Device Tree"
+	depends on HAS_DTS
+	help
+	This option specifies that the target platform supports device tree
+	configuration for ADC.
+
 config HAS_DTS_I2C
 	bool "I2C uses Device Tree"
+	default n
 	depends on HAS_DTS
 	help
 	This option specifies that the target platform supports device tree
@@ -202,6 +210,20 @@ config BOOT_BANNER
 	help
 	This option outputs a banner to the console device during boot up. It
 	also embeds a date & time stamp in the kernel and in each USAP image.
+
+config BOOT_DELAY
+	int
+	prompt "Boot delay in milliseconds"
+	default 0
+	help
+	This option delays bootup for the specified amount of
+	milliseconds. This is used to allow serial ports to get ready
+	before starting to print information on them during boot, as
+	some systems might boot to fast for a receiving endpoint to
+	detect the new USB serial bus, enumerate it and get ready to
+	receive before it actually gets data. A similar effect can be
+	achieved by waiting for DCD on the serial port--however, not
+	all serial ports have DCD.
 
 config BUILD_TIMESTAMP
 	bool
