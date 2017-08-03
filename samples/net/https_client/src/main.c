@@ -20,6 +20,11 @@
 
 #include <net/net_app.h>
 
+#if defined(CONFIG_NET_L2_BLUETOOTH)
+#include <bluetooth/bluetooth.h>
+#include <gatt/ipss.h>
+#endif
+
 #include "config.h"
 
 #define INSTANCE_INFO "Zephyr HTTPS example client #1"
@@ -44,6 +49,29 @@ K_MEM_POOL_DEFINE(ssl_rx_pool, 4, 64, RX_FIFO_DEPTH, 4);
  * allocated from stack.
  */
 static struct http_client_ctx https_ctx;
+
+#if defined(CONFIG_NET_CONTEXT_NET_PKT_POOL)
+NET_PKT_TX_SLAB_DEFINE(http_cli_tls_tx, 15);
+NET_PKT_DATA_POOL_DEFINE(http_cli_tls_data, 30);
+
+static struct k_mem_slab *tx_slab(void)
+{
+	return &http_cli_tls_tx;
+}
+
+static struct net_buf_pool *data_pool(void)
+{
+	return &http_cli_tls_data;
+}
+#else
+#if defined(CONFIG_NET_L2_BLUETOOTH)
+#error "TCP connections over Bluetooth need CONFIG_NET_CONTEXT_NET_PKT_POOL "\
+	"defined."
+#endif /* CONFIG_NET_L2_BLUETOOTH */
+
+#define tx_slab NULL
+#define data_pool NULL
+#endif /* CONFIG_NET_CONTEXT_NET_PKT_POOL */
 
 struct waiter {
 	struct http_client_ctx *ctx;
@@ -370,6 +398,15 @@ void main(void)
 	bool failure = false;
 	int ret;
 
+#if defined(CONFIG_NET_L2_BLUETOOTH)
+	if (bt_enable(NULL) == 0) {
+		ipss_init();
+		ipss_advertise();
+	} else {
+		NET_ERR("Bluetooth init failed");
+	}
+#endif
+
 	ret = https_client_init(&https_ctx, SERVER_ADDR, SERVER_PORT,
 				(u8_t *)INSTANCE_INFO, strlen(INSTANCE_INFO),
 				setup_cert, HOSTNAME, NULL, &ssl_rx_pool,
@@ -378,6 +415,8 @@ void main(void)
 		NET_ERR("HTTPS init failed (%d)", ret);
 		panic(NULL);
 	}
+
+	http_client_set_net_pkt_pool(&https_ctx, tx_slab, data_pool);
 
 	ret = do_sync_reqs(&https_ctx, MAX_ITERATIONS);
 	if (ret < 0) {

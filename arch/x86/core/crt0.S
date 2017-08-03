@@ -88,14 +88,14 @@ SECTION_FUNC(TEXT_START, __start)
 #ifdef CONFIG_SET_GDT
 	/* If we set our own GDT, update the segment registers as well.
 	 */
-	movw	$0x10, %ax	/* data segment selector (entry = 3) */
+	movw	$DATA_SEG, %ax	/* data segment selector (entry = 3) */
 	movw	%ax, %ds	/* set DS */
 	movw	%ax, %es	/* set ES */
 	movw	%ax, %fs	/* set FS */
 	movw	%ax, %gs	/* set GS */
 	movw	%ax, %ss	/* set SS */
 
-	ljmp	$0x08, $__csSet	/* set CS = 0x08 */
+	ljmp	$CODE_SEG, $__csSet	/* set CS = 0x08 */
 
 __csSet:
 #endif /* CONFIG_SET_GDT */
@@ -175,14 +175,23 @@ __csSet:
 #ifdef CONFIG_INIT_STACKS
 	movl $0xAAAAAAAA, %eax
 	leal _interrupt_stack, %edi
+#ifdef CONFIG_X86_STACK_PROTECTION
+	addl $4096, %edi
+#endif
 	stack_size_dwords = (CONFIG_ISR_STACK_SIZE / 4)
 	movl $stack_size_dwords, %ecx
 	rep  stosl
 #endif
 
 	movl	$_interrupt_stack, %esp
+#ifdef CONFIG_X86_STACK_PROTECTION
+	/* In this configuration, all stacks, including IRQ stack, are declared
+	 * with a 4K non-present guard page preceding the stack buffer
+	 */
+	addl	$(CONFIG_ISR_STACK_SIZE + 4096), %esp
+#else
 	addl	$CONFIG_ISR_STACK_SIZE, %esp
-
+#endif
 #if defined(CONFIG_SYS_POWER_DEEP_SLEEP) && \
              !defined(CONFIG_BOOTLOADER_CONTEXT_RESTORE)
 	/*
@@ -262,7 +271,10 @@ __csSet:
 
 #endif /* CONFIG_X86_MMU */
 
-
+#ifdef CONFIG_X86_STACK_PROTECTION
+	mov $MAIN_TSS, %ax
+	ltr %ax
+#endif
 	/* Jump to C portion of kernel initialization and never return */
 
 	jmp	_Cstart

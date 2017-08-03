@@ -7,7 +7,7 @@ and attempts to execute them. By default, it tries to build each test case
 boards set to be default in the board definition file.
 
 The default options will build the  majority of the tests on a defined set of
-boards and will run in emulated environemnts (QEMU) if available for the
+boards and will run in emulated environments (QEMU) if available for the
 architecture or configuration being tested.
 
 In general, the sanitycheck is used to verify that local changes did not break
@@ -201,6 +201,27 @@ ram:
 flash:
   Available FLASH on the board (specified in KB). This is used to match testcase
   requirements.  If not specified we default to 512KB.
+supported:
+  A list of features this board supports. This can be specified as a single word
+  feature or as a variant of a feature class. For example:
+
+  ::
+
+        supported:
+          - pci
+
+  This indicates the board does support PCI. You can make a testcase build or
+  run only on such boards, or:
+
+  ::
+
+        supported:
+          - netif:eth
+          - sensor:bmi16
+
+  A testcase can both depend on 'eth' to only test ethernet or on 'netif' to run
+  on any board with a networking interface.
+
 testing:
   testing relating keywords to provide best coverage for the features of this
   board.
@@ -227,7 +248,7 @@ that testcase meta-data.
 
 Test cases are written suing the YAML syntax and share the same structure as
 samples. The following is an example test with a few options that are
-exaplained in this document.
+explained in this document.
 
 
 ::

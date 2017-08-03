@@ -4,59 +4,14 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#include <arm/armv7-m.dtsi>
-#include <st/mem.h>
+#include <st/stm32l4.dtsi>
 
 / {
-	cpus {
-		#address-cells = <1>;
-		#size-cells = <0>;
-
-		cpu@0 {
-			device_type = "cpu";
-			compatible = "arm,cortex-m4f";
-			reg = <0>;
-		};
-	};
-
-	flash0: flash@8000000 {
-		reg = <0x08000000 DT_FLASH_SIZE>;
-	};
-
-	sram0: memory@20000000 {
-		device_type = "memory";
-		compatible = "mmio-sram";
-		reg = <0x20000000 DT_SRAM_SIZE>;
-	};
-
 	soc {
-		usart1: serial@40013800 {
-			compatible = "st,stm32-usart", "st,stm32-uart";
-			reg = <0x40013800 0x400>;
-			interrupts = <37 0>;
-			status = "disabled";
-			label = "UART_1";
-		};
-
-		usart2: serial@40004400 {
-			compatible = "st,stm32-usart", "st,stm32-uart";
-			reg = <0x40004400 0x400>;
-			interrupts = <38 0>;
-			status = "disabled";
-			label = "UART_2";
-		};
-
-		usart3: serial@40004800 {
-			compatible = "st,stm32-usart", "st,stm32-uart";
-			reg = <0x40004800 0x400>;
-			interrupts = <39 0>;
-			status = "disabled";
-			label = "UART_3";
-		};
-
 		uart4: serial@40004c00 {
 			compatible = "st,stm32-uart";
 			reg = <0x40004c00 0x400>;
+			clocks = <&rcc STM32_CLOCK_BUS_APB1 0x00080000>;
 			interrupts = <52 0>;
 			status = "disabled";
 			label = "UART_4";
@@ -65,20 +20,10 @@
 		uart5: serial@40005000 {
 			compatible = "st,stm32-uart";
 			reg = <0x40005000 0x400>;
+			clocks = <&rcc STM32_CLOCK_BUS_APB1 0x00100000>;
 			interrupts = <53 0>;
 			status = "disabled";
 			label = "UART_5";
-		};
-
-		i2c1: i2c@40005400 {
-			compatible = "st,stm32-i2c-v2";
-			#address-cells = <1>;
-			#size-cells = <0>;
-			reg = <0x40005400 0x400>;
-			interrupts = <31 0>, <32 0>;
-			interrupt-names = "event", "error";
-			status = "disabled";
-			label= "I2C_1";
 		};
 
 		i2c2: i2c@40005800 {
@@ -103,8 +48,4 @@
 			label= "I2C_3";
 		};
 	};
-};
-
-&nvic {
-	arm,num-irq-priority-bits = <4>;
 };

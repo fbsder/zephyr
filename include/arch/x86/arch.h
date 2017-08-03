@@ -18,6 +18,7 @@
 #include <arch/x86/irq_controller.h>
 #include <kernel_arch_thread.h>
 #include <generated_dts_board.h>
+#include <mmustructs.h>
 
 #ifndef _ASMLANGUAGE
 #include <arch/x86/asm_inline.h>
@@ -76,6 +77,12 @@ typedef struct s_isrList {
 	unsigned int    vec;
 	/** Privilege level associated with ISR/stub */
 	unsigned int    dpl;
+
+	/** If nonzero, specifies a TSS segment selector. Will configure
+	 * a task gate instead of an interrupt gate. fnc parameter will be
+	 * ignored
+	 */
+	unsigned int	tss;
 } ISR_LIST;
 
 
@@ -106,8 +113,39 @@ typedef struct s_isrList {
 #define NANO_CPU_INT_REGISTER(r, n, p, v, d) \
 	 static ISR_LIST __attribute__((section(".intList"))) \
 			 __attribute__((used)) MK_ISR_NAME(r) = \
-			{&r, n, p, v, d}
+			{ \
+				.fnc = &(r), \
+				.irq = (n), \
+				.priority = (p), \
+				.vec = (v), \
+				.dpl = (d), \
+				.tss = 0 \
+			}
 
+/**
+ * @brief Connect an IA hardware task to an interrupt vector
+ *
+ * This is very similar to NANO_CPU_INT_REGISTER but instead of connecting
+ * a handler function, the interrupt will induce an IA hardware task
+ * switch to another hardware task instead.
+ *
+ * @param tss_p GDT/LDT segment selector for the TSS representing the task
+ * @param irq_p IRQ number
+ * @param priority_p IRQ priority
+ * @param vec_p Interrupt vector
+ * @param dpl_p Descriptor privilege level
+ */
+#define _X86_IDT_TSS_REGISTER(tss_p, irq_p, priority_p, vec_p, dpl_p) \
+	static ISR_LIST __attribute__((section(".intList"))) \
+			__attribute__((used)) MK_ISR_NAME(r) = \
+			{ \
+				.fnc = NULL, \
+				.irq = (irq_p), \
+				.priority = (priority_p), \
+				.vec = (vec_p), \
+				.dpl = (dpl_p), \
+				.tss = (tss_p) \
+			}
 
 /**
  * Code snippets for populating the vector ID and priority into the intList
@@ -172,6 +210,7 @@ typedef struct s_isrList {
 		".long %c[priority]\n\t"	/* ISR_LIST.priority */ \
 		".long %c[vector]\n\t"		/* ISR_LIST.vec */ \
 		".long 0\n\t"			/* ISR_LIST.dpl */ \
+		".long 0\n\t"			/* ISR_LIST.tss */ \
 		".popsection\n\t" \
 		".pushsection .text.irqstubs\n\t" \
 		".global %c[isr]_irq%c[irq]_stub\n\t" \
@@ -420,22 +459,6 @@ extern void	_arch_irq_enable(unsigned int irq);
 extern void	_arch_irq_disable(unsigned int irq);
 
 /**
- * @brief check page table entry flags
- *
- * This routine checks if the buffer is avaialable to the whoever calls
- * this API.
- * @param addr start address of the buffer
- * @param size the size of the buffer
- * @param flags permisions to check.
- *    Consists of 2 bits the bit0 represents the RW permissions
- *    The bit1 represents the user/supervisor permissions
- *    Use macro BUFF_READABLE/BUFF_WRITEABLE or BUFF_USER to build the flags
- *
- * @return true-if the permissions of the pde matches the request
- */
-int _x86_mmu_buffer_validate(void *addr, size_t size, int flags);
-
-/**
  * @defgroup float_apis Floating Point APIs
  * @ingroup kernel_apis
  * @{
@@ -508,25 +531,41 @@ extern FUNC_NORETURN void _SysFatalErrorHandler(unsigned int reason,
 						const NANO_ESF * pEsf);
 
 
+#ifdef CONFIG_X86_STACK_PROTECTION
+#define _STACK_GUARD_SIZE	MMU_PAGE_SIZE
+#define _STACK_BASE_ALIGN	MMU_PAGE_SIZE
+#else
+#define _STACK_GUARD_SIZE	0
+#define _STACK_BASE_ALIGN	STACK_ALIGN
+#endif
+
+
+
 /* All thread stacks, regardless of whether owned by application or kernel,
  * go in the .stacks input section, which will end up in the kernel's
  * noinit.
  */
 
 #define _ARCH_THREAD_STACK_DEFINE(sym, size) \
-	char _GENERIC_SECTION(.stacks) __aligned(STACK_ALIGN) sym[size]
+	struct _k_thread_stack_element _GENERIC_SECTION(.stacks) \
+		__aligned(_STACK_BASE_ALIGN) \
+		sym[(size) + _STACK_GUARD_SIZE]
 
 #define _ARCH_THREAD_STACK_ARRAY_DEFINE(sym, nmemb, size) \
-	char _GENERIC_SECTION(.stacks) __aligned(STACK_ALIGN) sym[nmemb][size]
+	struct _k_thread_stack_element _GENERIC_SECTION(.stacks) \
+		__aligned(_STACK_BASE_ALIGN) \
+		sym[nmemb][ROUND_UP(size, _STACK_BASE_ALIGN) + \
+			   _STACK_GUARD_SIZE]
 
 #define _ARCH_THREAD_STACK_MEMBER(sym, size) \
-	char __aligned(STACK_ALIGN) sym[size]
+	struct _k_thread_stack_element __aligned(_STACK_BASE_ALIGN) \
+		sym[(size) + _STACK_GUARD_SIZE]
 
 #define _ARCH_THREAD_STACK_SIZEOF(sym) \
-	sizeof(sym)
+	(sizeof(sym) - _STACK_GUARD_SIZE)
 
 #define _ARCH_THREAD_STACK_BUFFER(sym) \
-	sym
+	((char *)((sym) + _STACK_GUARD_SIZE))
 
 #if CONFIG_X86_KERNEL_OOPS
 #define _ARCH_EXCEPT(reason_p) do { \
@@ -538,10 +577,48 @@ extern FUNC_NORETURN void _SysFatalErrorHandler(unsigned int reason,
 		  [reason] "i" (reason_p)); \
 	CODE_UNREACHABLE; \
 } while (0)
-#else
+#endif
+
 /** Dummy ESF for fatal errors that would otherwise not have an ESF */
 extern const NANO_ESF _default_esf;
-#endif /* CONFIG_X86_KERNEL_OOPS */
+
+#ifdef CONFIG_X86_MMU
+/* Linker variable. It needed to access the start of the Page directory */
+extern u32_t __mmu_tables_start;
+
+#define X86_MMU_PD ((struct x86_mmu_page_directory *)\
+		    (void *)&__mmu_tables_start)
+
+/**
+ * @brief set flags in the MMU page tables
+ *
+ * Modify bits in the existing page tables for a particular memory
+ * range, which must be page-aligned
+ *
+ * @param ptr Starting memory address which must be page-aligned
+ * @param size Size of the region, must be page size multiple
+ * @flags Value of bits to set in the page table entries
+ * @mask Mask indicating which particular bits in the page table entries to
+ *	 modify
+ */
+void _x86_mmu_set_flags(void *ptr, size_t size, u32_t flags, u32_t mask);
+
+/**
+ * @brief check page table entry flags
+ *
+ * This routine checks if the buffer is avaialable to the whoever calls
+ * this API.
+ * @param addr start address of the buffer
+ * @param size the size of the buffer
+ * @param flags permisions to check.
+ *    Consists of 2 bits the bit0 represents the RW permissions
+ *    The bit1 represents the user/supervisor permissions
+ *    Use macro BUFF_READABLE/BUFF_WRITEABLE or BUFF_USER to build the flags
+ *
+ * @return true-if the permissions of the pde matches the request
+ */
+int _x86_mmu_buffer_validate(void *addr, size_t size, int flags);
+#endif /* CONFIG_X86_MMU */
 
 #endif /* !_ASMLANGUAGE */
 

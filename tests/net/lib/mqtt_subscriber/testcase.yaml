@@ -1,5 +1,5 @@
 tests:
 -   test:
         build_only: true
-        platform_whitelist: frdm_k64f qemu_x86
+        min_ram: 16
         tags: net mqtt

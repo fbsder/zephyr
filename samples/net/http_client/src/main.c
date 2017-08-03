@@ -20,6 +20,11 @@
 
 #include <net/net_app.h>
 
+#if defined(CONFIG_NET_L2_BLUETOOTH)
+#include <bluetooth/bluetooth.h>
+#include <gatt/ipss.h>
+#endif
+
 #include "config.h"
 
 #define MAX_ITERATIONS	20
@@ -33,6 +38,29 @@ static u8_t result[RESULT_BUF_SIZE];
  * allocated from stack.
  */
 static struct http_client_ctx http_ctx;
+
+#if defined(CONFIG_NET_CONTEXT_NET_PKT_POOL)
+NET_PKT_TX_SLAB_DEFINE(http_cli_tx, 15);
+NET_PKT_DATA_POOL_DEFINE(http_cli_data, 30);
+
+static struct k_mem_slab *tx_slab(void)
+{
+	return &http_cli_tx;
+}
+
+static struct net_buf_pool *data_pool(void)
+{
+	return &http_cli_data;
+}
+#else
+#if defined(CONFIG_NET_L2_BLUETOOTH)
+#error "TCP connections over Bluetooth need CONFIG_NET_CONTEXT_NET_PKT_POOL "\
+	"defined."
+#endif /* CONFIG_NET_L2_BLUETOOTH */
+
+#define tx_slab NULL
+#define data_pool NULL
+#endif /* CONFIG_NET_CONTEXT_NET_PKT_POOL */
 
 struct waiter {
 	struct http_client_ctx *ctx;
@@ -307,11 +335,22 @@ void main(void)
 {
 	int ret;
 
+#if defined(CONFIG_NET_L2_BLUETOOTH)
+	if (bt_enable(NULL) == 0) {
+		ipss_init();
+		ipss_advertise();
+	} else {
+		NET_ERR("Bluetooth init failed");
+	}
+#endif
+
 	ret = http_client_init(&http_ctx, SERVER_ADDR, SERVER_PORT);
 	if (ret < 0) {
 		NET_ERR("HTTP init failed (%d)", ret);
 		panic(NULL);
 	}
+
+	http_client_set_net_pkt_pool(&http_ctx, tx_slab, data_pool);
 
 	ret = do_sync_reqs(&http_ctx, MAX_ITERATIONS);
 	if (ret < 0) {

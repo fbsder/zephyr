@@ -17,7 +17,8 @@ static K_THREAD_STACK_DEFINE(alt_stack, STACKSIZE);
 
 #ifdef CONFIG_STACK_SENTINEL
 #define OVERFLOW_STACKSIZE 1024
-static char *overflow_stack = alt_stack + (STACKSIZE - OVERFLOW_STACKSIZE);
+static k_thread_stack_t overflow_stack =
+		alt_stack + (STACKSIZE - OVERFLOW_STACKSIZE);
 #else
 #define OVERFLOW_STACKSIZE STACKSIZE
 #endif
@@ -123,6 +124,8 @@ void stack_thread2(void)
 
 void main(void)
 {
+	int expected_reason;
+
 	rv = TC_PASS;
 
 	TC_START("test_fatal");
@@ -162,7 +165,8 @@ void main(void)
 	}
 
 	TC_PRINT("test alt thread 3: initiate kernel panic\n");
-	k_thread_create(&alt_thread, alt_stack, sizeof(alt_stack),
+	k_thread_create(&alt_thread, alt_stack,
+			K_THREAD_STACK_SIZEOF(alt_stack),
 			(k_thread_entry_t)alt_thread3,
 			NULL, NULL, NULL, K_PRIO_COOP(PRIORITY), 0,
 			K_NO_WAIT);
@@ -194,9 +198,19 @@ void main(void)
 			(k_thread_entry_t)stack_thread1,
 			NULL, NULL, NULL, K_PRIO_PREEMPT(PRIORITY), 0,
 			K_NO_WAIT);
-	if (crash_reason != _NANO_ERR_STACK_CHK_FAIL) {
+
+#ifdef CONFIG_X86_STACK_PROTECTION
+	/* x86 double-faults when stack overflow in kernel mode, we're
+	 * in an alternate IA HW task when we finish the test
+	 */
+	expected_reason = _NANO_ERR_KERNEL_PANIC;
+#else
+	expected_reason = _NANO_ERR_STACK_CHK_FAIL;
+#endif
+
+	if (crash_reason != expected_reason) {
 		TC_ERROR("bad reason code got %d expected %d\n",
-			 crash_reason, _NANO_ERR_KERNEL_PANIC);
+			 crash_reason, expected_reason);
 		rv = TC_FAIL;
 	}
 	if (rv == TC_FAIL) {
@@ -206,19 +220,18 @@ void main(void)
 		TC_PRINT("PASS\n");
 	}
 
-	TC_PRINT("test stack overflow - swap\n");
 #ifdef CONFIG_STACK_SENTINEL
+	/* Stack sentinel has to be invoked, make sure it happens during
+	 * a context switch
+	 */
+	TC_PRINT("test stack overflow - swap\n");
 	k_thread_create(&alt_thread, overflow_stack, OVERFLOW_STACKSIZE,
-#else
-	k_thread_create(&alt_thread, alt_stack,
-			K_THREAD_STACK_SIZEOF(alt_stack),
-#endif
 			(k_thread_entry_t)stack_thread2,
 			NULL, NULL, NULL, K_PRIO_PREEMPT(PRIORITY), 0,
 			K_NO_WAIT);
 	if (crash_reason != _NANO_ERR_STACK_CHK_FAIL) {
 		TC_ERROR("bad reason code got %d expected %d\n",
-			 crash_reason, _NANO_ERR_KERNEL_PANIC);
+			 crash_reason, _NANO_ERR_STACK_CHK_FAIL);
 		rv = TC_FAIL;
 	}
 	if (rv == TC_FAIL) {
@@ -227,6 +240,7 @@ void main(void)
 	} else {
 		TC_PRINT("PASS\n");
 	}
+#endif
 out:
 	TC_END_RESULT(rv);
 	TC_END_REPORT(rv);

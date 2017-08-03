@@ -1,5 +1,10 @@
 tests:
 -   test:
-        platform_whitelist: qemu_x86 arduino_101 quark_se_c1000_devboard
-            frdm_k64f
-        tags: http
+        tags: http net
+        filter: not CONFIG_BLUETOOTH
+        min_ram: 12
+        platform_exclude: hexiwear_kw40z
+-   test_with_bt:
+        tags: http net
+        filter: CONFIG_BLUETOOTH
+        min_ram: 16

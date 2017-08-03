@@ -20,6 +20,8 @@ extern "C" {
 #define STACK_ROUND_UP(x) ROUND_UP(x, STACK_ALIGN_SIZE)
 #define STACK_ROUND_DOWN(x) ROUND_DOWN(x, STACK_ALIGN_SIZE)
 
+extern K_THREAD_STACK_DEFINE(_interrupt_stack, CONFIG_ISR_STACK_SIZE);
+
 /**
  *
  * @brief Performs architecture-specific initialization
@@ -32,10 +34,13 @@ extern "C" {
  */
 static inline void kernel_arch_init(void)
 {
-	extern char _interrupt_stack[CONFIG_ISR_STACK_SIZE];
-
 	_kernel.nested = 0;
-	_kernel.irq_stack = _interrupt_stack + CONFIG_ISR_STACK_SIZE;
+	_kernel.irq_stack = K_THREAD_STACK_BUFFER(_interrupt_stack) +
+				CONFIG_ISR_STACK_SIZE;
+#if CONFIG_X86_STACK_PROTECTION
+	_x86_mmu_set_flags(_interrupt_stack, MMU_PAGE_SIZE,
+			   MMU_ENTRY_NOT_PRESENT, MMU_PTE_P_MASK);
+#endif
 }
 
 /**

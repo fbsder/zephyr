@@ -165,7 +165,7 @@ static void net_rx_thread(void)
 
 		pkt = k_fifo_get(&rx_queue, K_FOREVER);
 
-		net_analyze_stack("RX thread", rx_stack,
+		net_analyze_stack("RX thread", K_THREAD_STACK_BUFFER(rx_stack),
 				  K_THREAD_STACK_SIZEOF(rx_stack));
 
 #if defined(CONFIG_NET_STATISTICS) || defined(CONFIG_NET_DEBUG_CORE)
@@ -381,8 +381,6 @@ static int net_init(struct device *unused)
 	int status = 0;
 
 	NET_DBG("Priority %d", CONFIG_NET_INIT_PRIO);
-
-	net_shell_init();
 
 	net_pkt_init();
 

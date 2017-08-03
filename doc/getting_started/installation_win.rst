@@ -56,42 +56,14 @@ environment for Windows. Follow the steps below to set it up:
 
    .. code-block:: console
 
-      $ pacman -S git make gcc diffutils ncurses-devel python3
+      $ pacman -S git make gcc dtc diffutils ncurses-devel python3
 
 #. Install pip and the required Python modules::
 
       $ curl -O 'https://bootstrap.pypa.io/get-pip.py'
       $ ./get-pip.py
       $ rm get-pip.py
-
-      $ pip install pyaml
-
-#. Build the Device Tree Compiler (DTC)
-
-   For the architectures and boards listed in the ``dts/`` folder of the Zephyr
-   source tree, the DTC is required to be able to build Zephyr.
-   To set up the DTC follow the instructions below:
-
-   * Install the required build tools::
-
-        $ pacman -S bison
-        $ pacman -R flex
-        $ pacman -U http://repo.msys2.org/msys/x86_64/flex-2.6.0-1-x86_64.pkg.tar.xz
-
-   .. note::
-        At this time we need to pin the ``flex`` version to an older one due
-        to an issue with the latest available.
-
-   * Clone and build the DTC::
-
-        $ cd ~
-        $ git clone https://git.kernel.org/pub/scm/utils/dtc/dtc.git
-        $ cd dtc
-        $ make
-
-   * Export the location of the DTC::
-
-        $ export DTC=~/dtc/dtc
+      $ pip install --user -r scripts/requirements.txt
 
 #. The build system should now be ready to work with any toolchain installed in
    your system. In the next step you'll find instructions for installing

@@ -1,5 +1,5 @@
 tests:
 -   test:
-        platform_whitelist: qemu_x86
         tags: dns net
+        min_ram: 16
         timeout: 600

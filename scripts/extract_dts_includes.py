@@ -238,7 +238,8 @@ def extract_interrupts(node_address, yaml, y_key, names, defs, def_label):
             l_fqn = '_'.join(l_base + l_cell_prefix + l_idx + l_cell_name)
             prop_def[l_fqn] = props.pop(0)
             if len(name):
-                prop_alias['_'.join(l_base + name + l_cell_name)] = l_fqn
+                alias_list = l_base + l_cell_prefix + name + l_cell_name
+                prop_alias['_'.join(alias_list)] = l_fqn
 
         index += 1
         insert_defs(node_address, defs, prop_def, prop_alias)
@@ -777,21 +778,16 @@ def main():
         extract_reg_prop(chosen['zephyr,sram'], None,
                          defs, "CONFIG_SRAM", 1024, None)
 
-    if 'zephyr,console' in chosen:
-        extract_string_prop(chosen['zephyr,console'], None, "label",
-                            "CONFIG_UART_CONSOLE_ON_DEV_NAME", defs)
+    name_dict = {
+            "CONFIG_UART_CONSOLE_ON_DEV_NAME": "zephyr,console",
+            "CONFIG_BLUETOOTH_UART_ON_DEV_NAME": "zephyr,bt-uart",
+            "CONFIG_UART_PIPE_ON_DEV_NAME": "zephyr,uart-pipe",
+            "CONFIG_BLUETOOTH_MONITOR_ON_DEV_NAME": "zephyr,bt-mon-uart"
+            }
 
-    if 'zephyr,bt-uart' in chosen:
-       extract_string_prop(chosen['zephyr,bt-uart'], None, "label",
-                           "CONFIG_BLUETOOTH_UART_ON_DEV_NAME", defs)
-
-    if 'zephyr,uart-pipe' in chosen:
-       extract_string_prop(chosen['zephyr,uart-pipe'], None, "label",
-                           "CONFIG_UART_PIPE_ON_DEV_NAME", defs)
-
-    if 'zephyr,bt-mon-uart' in chosen:
-       extract_string_prop(chosen['zephyr,bt-mon-uart'], None, "label",
-                           "CONFIG_BLUETOOTH_MONITOR_ON_DEV_NAME", defs)
+    for k, v in name_dict.items():
+        if v in chosen:
+            extract_string_prop(chosen[v], None, "label", k, defs)
 
     # only compute the load offset if a code partition exists and it is not the
     # same as the flash base address

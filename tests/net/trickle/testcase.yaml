@@ -1,4 +1,4 @@
 tests:
 -   test:
-        platform_whitelist: qemu_x86
         tags: net
+        min_ram: 12

@@ -9,6 +9,16 @@
 
 #include <net/net_context.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+/**
+ * @brief HTTP client and server library
+ * @defgroup http HTTP Library
+ * @{
+ */
+
 #if defined(CONFIG_HTTPS)
 #if defined(CONFIG_MBEDTLS)
 #if !defined(CONFIG_MBEDTLS_CFG_FILE)
@@ -196,6 +206,18 @@ struct http_client_ctx {
 	/** Server name */
 	const char *server;
 
+#if defined(CONFIG_NET_CONTEXT_NET_PKT_POOL)
+	/** Network packet (net_pkt) memory pool for network contexts attached
+	 * to this http_client context.
+	 */
+	net_pkt_get_slab_func_t tx_slab;
+
+	/** Network data net_buf pool for network contexts attached to this
+	 * http_client context.
+	 */
+	net_pkt_get_pool_func_t data_pool;
+#endif /* CONFIG_NET_CONTEXT_NET_PKT_POOL */
+
 	/** Is this instance HTTPS or not.
 	 */
 	bool is_https;
@@ -310,7 +332,7 @@ struct http_client_ctx {
 #if defined(CONFIG_HTTPS)
 	struct {
 		/** HTTPS stack for mbedtls library. */
-		u8_t *stack;
+		k_thread_stack_t stack;
 
 		/** HTTPS stack size. */
 		int stack_size;
@@ -566,7 +588,7 @@ int https_client_init(struct http_client_ctx *http_ctx,
 		      const char *cert_host,
 		      https_entropy_src_cb_t entropy_src_cb,
 		      struct k_mem_pool *pool,
-		      u8_t *https_stack,
+		      k_thread_stack_t https_stack,
 		      size_t https_stack_size);
 #endif /* CONFIG_HTTPS */
 
@@ -576,6 +598,28 @@ int https_client_init(struct http_client_ctx *http_ctx,
  * @param http_ctx HTTP context.
  */
 void http_client_release(struct http_client_ctx *http_ctx);
+
+#if defined(CONFIG_NET_CONTEXT_NET_PKT_POOL)
+/**
+ * @brief Configure the net_pkt pool for this context.
+ *
+ * @details Use of this function is optional and if the pools are not set,
+ * then the default TX and DATA pools are used. This needs to be called before
+ * http init function, as that will setup net_context which needs the net_pkt
+ * pool information.
+ *
+ * @param ctx HTTP client context
+ * @param tx_slab Function which is used when allocating TX network packet.
+ * This can be NULL in which case default TX memory pool is used.
+ * @param data_pool Function which is used when allocating data network buffer.
+ * This can be NULL in which case default DATA net_buf pool is used.
+ */
+int http_client_set_net_pkt_pool(struct http_client_ctx *ctx,
+				 net_pkt_get_slab_func_t tx_slab,
+				 net_pkt_get_pool_func_t data_pool);
+#else
+#define http_client_set_net_pkt_pool(...)
+#endif /* CONFIG_NET_CONTEXT_NET_PKT_POOL */
 #endif /* CONFIG_HTTP_CLIENT */
 
 #if defined(CONFIG_HTTP_SERVER)
@@ -673,6 +717,18 @@ struct http_server_ctx {
 	/** Function that is called when data is sent to network. */
 	http_send_data_t send_data;
 
+#if defined(CONFIG_NET_CONTEXT_NET_PKT_POOL)
+	/** Network packet (net_pkt) memory pool for network contexts attached
+	 * to this http server context.
+	 */
+	net_pkt_get_slab_func_t tx_slab;
+
+	/** Network data net_buf pool for network contexts attached to this
+	 * http server context.
+	 */
+	net_pkt_get_pool_func_t data_pool;
+#endif /* CONFIG_NET_CONTEXT_NET_PKT_POOL */
+
 #if defined(CONFIG_NET_DEBUG_HTTP_CONN)
 	sys_snode_t node;
 #endif
@@ -739,7 +795,7 @@ struct http_server_ctx {
 #if defined(CONFIG_HTTPS)
 	struct {
 		/** HTTPS stack for mbedtls library. */
-		u8_t *stack;
+		k_thread_stack_t stack;
 
 		/** HTTPS stack size. */
 		int stack_size;
@@ -871,7 +927,7 @@ int https_server_init(struct http_server_ctx *http_ctx,
 		      https_server_cert_cb_t cert_cb,
 		      https_entropy_src_cb_t entropy_src_cb,
 		      struct k_mem_pool *pool,
-		      u8_t *https_stack,
+		      k_thread_stack_t https_stack,
 		      size_t https_stack_len);
 #endif /* CONFIG_HTTPS */
 
@@ -1046,6 +1102,36 @@ int http_response_403(struct http_server_ctx *ctx, const char *html_payload);
  */
 int http_response_404(struct http_server_ctx *ctx, const char *html_payload);
 
+#if defined(CONFIG_NET_CONTEXT_NET_PKT_POOL)
+/**
+ * @brief Configure the net_pkt pool for this context.
+ *
+ * @details Use of this function is optional and if the pools are not set,
+ * then the default TX and DATA pools are used. This needs to be called before
+ * http init function, as that will setup net_context which needs the net_pkt
+ * pool information.
+ *
+ * @param ctx HTTP server context
+ * @param tx_slab Function which is used when allocating TX network packet.
+ * This can be NULL in which case default TX memory pool is used.
+ * @param data_pool Function which is used when allocating data network buffer.
+ * This can be NULL in which case default DATA net_buf pool is used.
+ */
+int http_server_set_net_pkt_pool(struct http_server_ctx *ctx,
+				 net_pkt_get_slab_func_t tx_slab,
+				 net_pkt_get_pool_func_t data_pool);
+#else
+#define http_server_set_net_pkt_pool(...)
+#endif /* CONFIG_NET_CONTEXT_NET_PKT_POOL */
+
 #endif /* CONFIG_HTTP_SERVER */
+
+#ifdef __cplusplus
+}
+#endif
+
+/**
+ * @}
+ */
 
 #endif /* __HTTP_H__ */

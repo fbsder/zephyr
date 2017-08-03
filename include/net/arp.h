@@ -13,9 +13,19 @@
 #ifndef __ARP_H
 #define __ARP_H
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #if defined(CONFIG_NET_ARP)
 
 #include <net/ethernet.h>
+
+/**
+ * @brief Address resolution (ARP) library
+ * @defgroup arp ARP Library
+ * @{
+ */
 
 #define NET_ARP_HDR(pkt) ((struct net_arp_hdr *)net_pkt_ip_data(pkt))
 
@@ -42,11 +52,19 @@ enum net_verdict net_arp_input(struct net_pkt *pkt);
 void net_arp_clear_cache(void);
 void net_arp_init(void);
 
+/**
+ * @}
+ */
+
 #else /* CONFIG_NET_ARP */
 
 #define net_arp_clear_cache(...)
 #define net_arp_init(...)
 
 #endif /* CONFIG_NET_ARP */
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* __ARP_H */
