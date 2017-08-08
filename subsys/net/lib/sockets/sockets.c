@@ -141,6 +141,10 @@ static void zsock_received_cb(struct net_context *ctx, struct net_pkt *pkt,
 	header_len = net_pkt_appdata(pkt) - pkt->frags->data;
 	net_buf_pull(pkt->frags, header_len);
 
+	if (net_context_get_type(ctx) == SOCK_STREAM) {
+		net_context_update_recv_wnd(ctx, -net_pkt_appdatalen(pkt));
+	}
+
 	k_fifo_put(&ctx->recv_q, pkt);
 }
 
@@ -311,6 +315,8 @@ static inline ssize_t zsock_recv_stream(struct net_context *ctx, void *buf, size
 		}
 	} while (recv_len == 0);
 
+	net_context_update_recv_wnd(ctx, recv_len);
+
 	return recv_len;
 }
 
@@ -399,7 +405,7 @@ int zsock_poll(struct zsock_pollfd *fds, int nfds, int timeout)
 			continue;
 		}
 
-		if (pfd->events & POLLIN) {
+		if (pfd->events & ZSOCK_POLLIN) {
 			struct net_context *ctx = INT_TO_POINTER(pfd->fd);
 
 			if (pev == pev_end) {
@@ -432,13 +438,13 @@ int zsock_poll(struct zsock_pollfd *fds, int nfds, int timeout)
 		}
 
 		/* For now, assume that socket is always writable */
-		if (pfd->events & POLLOUT) {
-			pfd->revents |= POLLOUT;
+		if (pfd->events & ZSOCK_POLLOUT) {
+			pfd->revents |= ZSOCK_POLLOUT;
 		}
 
-		if (pfd->events & POLLIN) {
+		if (pfd->events & ZSOCK_POLLIN) {
 			if (pev->state != K_POLL_STATE_NOT_READY) {
-				pfd->revents |= POLLIN;
+				pfd->revents |= ZSOCK_POLLIN;
 			}
 			pev++;
 		}

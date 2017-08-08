@@ -28,6 +28,7 @@
 #include <net/net_app.h>
 
 #include "ieee802154_settings.h"
+#include "bt_settings.h"
 
 static K_SEM_DEFINE(waiter, 0, 1);
 static struct k_sem counter;
@@ -133,6 +134,19 @@ static struct in6_addr laddr;
 static void ipv6_event_handler(struct net_mgmt_event_callback *cb,
 			       u32_t mgmt_event, struct net_if *iface)
 {
+	int i;
+
+	if (mgmt_event == NET_EVENT_IPV6_ADDR_ADD) {
+		/* save the last added IP address for this interface */
+		for (i = NET_IF_MAX_IPV6_ADDR - 1; i >= 0; i--) {
+			if (iface->ipv6.unicast[i].is_used) {
+				memcpy(&laddr,
+				       &iface->ipv6.unicast[i].address.in6_addr,
+				       sizeof(laddr));
+			}
+		}
+	}
+
 	if (mgmt_event == NET_EVENT_IPV6_DAD_SUCCEED) {
 #if defined(CONFIG_NET_DEBUG_APP) && CONFIG_SYS_LOG_NET_LEVEL > 1
 		char hr_addr[NET_IPV6_ADDR_LEN];
@@ -170,7 +184,8 @@ static void setup_ipv6(struct net_if *iface, u32_t flags)
 
 	if (net_addr_pton(AF_INET6, CONFIG_NET_APP_MY_IPV6_ADDR, &laddr)) {
 		NET_ERR("Invalid address: %s", CONFIG_NET_APP_MY_IPV6_ADDR);
-		return;
+		/* some interfaces may add IP address later */
+		mask |= NET_EVENT_IPV6_ADDR_ADD;
 	}
 
 	if (flags & NET_APP_NEED_ROUTER) {
@@ -180,12 +195,16 @@ static void setup_ipv6(struct net_if *iface, u32_t flags)
 	net_mgmt_init_event_callback(&mgmt6_cb, ipv6_event_handler, mask);
 	net_mgmt_add_event_callback(&mgmt6_cb);
 
-	ifaddr = net_if_ipv6_addr_add(iface, &laddr, NET_ADDR_MANUAL, 0);
-	if (!ifaddr) {
-		NET_ERR("Cannot add %s to interface",
-			CONFIG_NET_APP_MY_IPV6_ADDR);
-		return;
+	if (mask && NET_EVENT_IPV6_ADDR_ADD == 0) {
+		ifaddr = net_if_ipv6_addr_add(iface, &laddr,
+					      NET_ADDR_MANUAL, 0);
+		if (!ifaddr) {
+			NET_ERR("Cannot add %s to interface",
+				CONFIG_NET_APP_MY_IPV6_ADDR);
+		}
 	}
+
+	return;
 }
 
 #else
@@ -259,6 +278,11 @@ static int init_net_app(struct device *device)
 	ret = _net_app_ieee802154_setup();
 	if (ret < 0) {
 		NET_ERR("Cannot setup IEEE 802.15.4 interface (%d)", ret);
+	}
+
+	ret = _net_app_bt_setup();
+	if (ret < 0) {
+		NET_ERR("Cannot setup Bluetooth interface (%d)", ret);
 	}
 #endif
 

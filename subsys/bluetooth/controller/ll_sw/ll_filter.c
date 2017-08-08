@@ -219,8 +219,8 @@ static u32_t filter_remove(struct ll_filter *filter, u8_t addr_type,
 #if defined(CONFIG_BLUETOOTH_CONTROLLER_PRIVACY)
 bt_addr_t *ctrl_lrpa_get(u8_t rl_idx)
 {
-	LL_ASSERT(rl_idx < ARRAY_SIZE(rl));
-	if (!rl[rl_idx].lirk || !rl[rl_idx].rpas_ready) {
+	if ((rl_idx >= ARRAY_SIZE(rl)) || !rl[rl_idx].lirk ||
+	    !rl[rl_idx].rpas_ready) {
 		return NULL;
 	}
 
@@ -447,6 +447,15 @@ bool ctrl_rl_idx_allowed(u8_t irkmatch_ok, u8_t rl_idx)
 	return !rl[rl_idx].pirk || rl[rl_idx].dev;
 }
 
+void ll_rl_id_addr_get(u8_t rl_idx, u8_t *id_addr_type, u8_t *id_addr)
+{
+	LL_ASSERT(rl_idx < CONFIG_BLUETOOTH_CONTROLLER_RL_SIZE);
+	LL_ASSERT(rl[rl_idx].taken);
+
+	*id_addr_type = rl[rl_idx].id_addr_type;
+	memcpy(id_addr, rl[rl_idx].id_addr.val, BDADDR_SIZE);
+}
+
 bool ctrl_rl_addr_allowed(u8_t id_addr_type, u8_t *id_addr, u8_t *rl_idx)
 {
 	int i, j;
@@ -615,10 +624,15 @@ void ll_rl_rpa_update(bool timeout)
 		if ((rl[i].taken) && (all || !rl[i].rpas_ready)) {
 
 			if (rl[i].pirk) {
-				err = bt_rpa_create(peer_irks[rl[i].pirk_idx],
-						    &rl[i].peer_rpa);
+				u8_t irk[16];
+
+				/* TODO: move this swap to the driver level */
+				sys_memcpy_swap(irk, peer_irks[rl[i].pirk_idx],
+						16);
+				err = bt_rpa_create(irk, &rl[i].peer_rpa);
 				LL_ASSERT(!err);
 			}
+
 			if (rl[i].lirk) {
 				bt_addr_t rpa;
 
@@ -873,9 +887,11 @@ u32_t ll_priv_mode_set(bt_addr_le_t *id_addr, u8_t mode)
 		default:
 			return BT_HCI_ERR_INVALID_PARAM;
 		}
+	} else {
+		return BT_HCI_ERR_UNKNOWN_CONN_ID;
 	}
 
-	return BT_HCI_ERR_UNKNOWN_CONN_ID;
+	return 0;
 }
 
 #endif /* CONFIG_BLUETOOTH_CONTROLLER_PRIVACY */

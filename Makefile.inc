@@ -87,12 +87,6 @@ debug:	$(DOTCONFIG)
 flash: $(DOTCONFIG)
 	$(Q)$(call zephyrmake,$(O),$@)
 
-qemugdb: debugserver
-
-qemu: $(DOTCONFIG)
-	@echo This target is deprecated, use 'make run' instead
-	$(Q)$(call zephyrmake,$(O),$@)
-
 run: $(DOTCONFIG)
 	$(Q)$(call zephyrmake,$(O),$@)
 
@@ -138,8 +132,6 @@ help:
 # Catch all
 %:
 	$(Q)$(call zephyrmake,$(O),$@)
-
-OVERLAY_CONFIG += $(ZEPHYR_BASE)/kernel/configs/kernel.config
 
 $(DOTCONFIG): $(BOARDCONFIG) $(KBUILD_DEFCONFIG_PATH) $(CONF_FILE)
 	$(Q)$(CONFIG_SHELL) $(ZEPHYR_BASE)/scripts/kconfig/merge_config.sh \
