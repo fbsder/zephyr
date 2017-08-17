@@ -792,6 +792,8 @@ struct net_buf *net_app_get_net_buf(struct net_app_ctx *ctx,
 				    struct net_pkt *pkt,
 				    s32_t timeout)
 {
+	struct net_buf *frag;
+
 	if (!ctx || !pkt) {
 		return NULL;
 	}
@@ -800,7 +802,14 @@ struct net_buf *net_app_get_net_buf(struct net_app_ctx *ctx,
 		return NULL;
 	}
 
-	return net_pkt_get_frag(pkt, timeout);
+	frag = net_pkt_get_frag(pkt, timeout);
+	if (!frag) {
+		return NULL;
+	}
+
+	net_pkt_frag_add(pkt, frag);
+
+	return frag;
 }
 
 int net_app_close(struct net_app_ctx *ctx)
@@ -980,7 +989,7 @@ static inline void copy_pool_vars(struct net_context *new_context,
 #define copy_pool_vars(...)
 #endif /* CONFIG_NET_CONTEXT_NET_PKT_POOL */
 
-static void dtls_timing_set_delay(void *data, u32_t int_ms, u32_t fin_ms)
+static void dtls_timing_set_delay(void *data, uint32_t int_ms, uint32_t fin_ms)
 {
 	struct dtls_timing_context *ctx = data;
 

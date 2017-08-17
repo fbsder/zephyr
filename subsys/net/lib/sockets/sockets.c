@@ -26,6 +26,9 @@
 
 static struct k_poll_event poll_events[CONFIG_NET_SOCKETS_POLL_MAX];
 
+static void zsock_received_cb(struct net_context *ctx, struct net_pkt *pkt,
+			      int status, void *user_data);
+
 static inline void sock_set_flag(struct net_context *ctx, u32_t mask,
 				 u32_t flag)
 {
@@ -43,14 +46,14 @@ static inline u32_t sock_get_flag(struct net_context *ctx, u32_t mask)
 #define sock_set_eof(ctx) sock_set_flag(ctx, SOCK_EOF, SOCK_EOF)
 #define sock_is_nonblock(ctx) sock_get_flag(ctx, SOCK_NONBLOCK)
 
-static inline void _k_fifo_wait_non_empty(struct k_fifo *fifo, int32_t timeout)
+static inline int _k_fifo_wait_non_empty(struct k_fifo *fifo, int32_t timeout)
 {
 	struct k_poll_event events[] = {
 		K_POLL_EVENT_INITIALIZER(K_POLL_TYPE_FIFO_DATA_AVAILABLE,
 					 K_POLL_MODE_NOTIFY_ONLY, fifo),
 	};
 
-	k_poll(events, ARRAY_SIZE(events), timeout);
+	return k_poll(events, ARRAY_SIZE(events), timeout);
 }
 
 static void zsock_flush_queue(struct net_context *ctx)
@@ -87,7 +90,8 @@ int zsock_close(int sock)
 	struct net_context *ctx = INT_TO_POINTER(sock);
 
 	/* Reset callbacks to avoid any race conditions while
-	 * flushing queues.
+	 * flushing queues. No need to check return values here
+	 * as Coverity complains in CID 173646.
 	 */
 	net_context_accept(ctx, NULL, K_NO_WAIT, NULL);
 	net_context_recv(ctx, NULL, K_NO_WAIT, NULL);
@@ -102,6 +106,8 @@ static void zsock_accepted_cb(struct net_context *new_ctx,
 			      struct sockaddr *addr, socklen_t addrlen,
 			      int status, void *user_data) {
 	struct net_context *parent = user_data;
+
+	net_context_recv(new_ctx, zsock_received_cb, K_NO_WAIT, NULL);
 
 	NET_DBG("parent=%p, ctx=%p, st=%d", parent, new_ctx, status);
 
@@ -192,8 +198,6 @@ int zsock_accept(int sock, struct sockaddr *addr, socklen_t *addrlen)
 
 	struct net_context *ctx = k_fifo_get(&parent->accept_q, K_FOREVER);
 
-	SET_ERRNO(net_context_recv(ctx, zsock_received_cb, K_NO_WAIT, NULL));
-
 	if (addr != NULL && addrlen != NULL) {
 		int len = min(*addrlen, sizeof(ctx->remote));
 
@@ -257,6 +261,7 @@ static inline ssize_t zsock_recv_stream(struct net_context *ctx, void *buf, size
 {
 	size_t recv_len = 0;
 	s32_t timeout = K_FOREVER;
+	int res;
 
 	if (sock_is_nonblock(ctx)) {
 		timeout = K_NO_WAIT;
@@ -271,7 +276,12 @@ static inline ssize_t zsock_recv_stream(struct net_context *ctx, void *buf, size
 			return 0;
 		}
 
-		_k_fifo_wait_non_empty(&ctx->recv_q, timeout);
+		res = _k_fifo_wait_non_empty(&ctx->recv_q, timeout);
+		if (res && res != -EAGAIN) {
+			errno = -res;
+			return -1;
+		}
+
 		pkt = k_fifo_peek_head(&ctx->recv_q);
 		if (!pkt) {
 			/* Either timeout expired, or wait was cancelled
@@ -455,4 +465,13 @@ int zsock_poll(struct zsock_pollfd *fds, int nfds, int timeout)
 	}
 
 	return ret;
+}
+
+int zsock_inet_pton(sa_family_t family, const char *src, void *dst)
+{
+	if (net_addr_pton(family, src, dst) == 0) {
+		return 1;
+	} else {
+		return 0;
+	}
 }
