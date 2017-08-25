@@ -46,7 +46,8 @@ u32_t ll_rl_clear(void);
 u32_t ll_rl_add(bt_addr_le_t *id_addr, const u8_t pirk[16],
 		const u8_t lirk[16]);
 u32_t ll_rl_remove(bt_addr_le_t *id_addr);
-u32_t ll_rl_prpa_get(bt_addr_le_t *id_addr, bt_addr_t *prpa);
+void ll_rl_crpa_set(u8_t id_addr_type, u8_t *id_addr, u8_t rl_idx, u8_t *crpa);
+u32_t ll_rl_crpa_get(bt_addr_le_t *id_addr, bt_addr_t *crpa);
 u32_t ll_rl_lrpa_get(bt_addr_le_t *id_addr, bt_addr_t *lrpa);
 u32_t ll_rl_enable(u8_t enable);
 void  ll_rl_timeout_set(u16_t timeout);
@@ -71,6 +72,9 @@ u32_t ll_feature_req_send(u16_t handle);
 u32_t ll_version_ind_send(u16_t handle);
 u32_t ll_terminate_ind_send(u16_t handle, u8_t reason);
 void ll_timeslice_ticker_id_get(u8_t * const instance_index, u8_t * const user_id);
+u32_t ll_rssi_get(u16_t handle, u8_t *rssi);
+u32_t ll_tx_power_level_get(u16_t handle, u8_t type, s8_t *tx_power_level);
+void ll_tx_power_get(s8_t *min, s8_t *max);
 
 #if defined(CONFIG_BT_CTLR_LE_PING)
 u32_t ll_apto_get(u16_t handle, u16_t *apto);

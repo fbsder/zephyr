@@ -10,8 +10,8 @@ We are pleased to announce the release of Zephyr kernel version 1.9.0
 
 Major enhancements planned with this release include:
 
-* POSIX API Layer
-* BSD Socket Support
+* Pthreads compatible API
+* BSD Sockets compatible API
 * Expand Device Tree support to more architectures
 * BLE Mesh
 * Bluetooth 5.0 Support (all features except Advertising Extensions)
@@ -19,10 +19,10 @@ Major enhancements planned with this release include:
 * Revamp Testsuite, Increase Coverage
 * Zephyr SDK NG
 * Eco System: Tracing, debugging support through 3rd party tools
+* Lightweight Machine to Machine (LwM2M) support
 
 These enhancements are planned, but may move out to a future release:
 
-* LWM2M
 * Thread Protocol (initial drop)
 * MMU/MPU (Cont.): Thread Isolation, Paging
 * Build and Configuration System (CMake)
@@ -38,17 +38,30 @@ Kernel
 Architectures
 *************
 
-* change description
+* arm: Added STM32F405, STM32F417, STM32F103x8 SoCs
+* arm: Added TI CC2650 SoC
+* arm: Removed TI CC3200 SoC
+* arm: Added MPU support to nRF52, STM32L4, and STM32F3
 
 Boards
 ******
 
-* change description
+* Added device tree support for Intel Quark based microcontroller boards
+  such as Arduino_101, tinytile, and Quark_d2000_crb.
+* arm: Added Atmel SAM4S Xplained board
+* arm: Added Olimex STM32-E407 and STM32-P405 boards
+* arm: Added STM32F412 Nucleo and STM32F429I-DISC1 boards
+* arm: Added TI SensorTag board
+* arm: Removed TI CC3200 LaunchXL board
+* arm: Added VBLUno51 and VBLUno52 boards
 
 Drivers and Sensors
 *******************
 
 * KW40Z IEEE 802.15.4 radio driver support added
+* APDS9960 sensor driver added
+* Added TICKLESS KERNEL support for nrf RTC Timer.
+* Added Kinetis adc and pwm drivers
 
 Networking
 **********
@@ -63,10 +76,12 @@ Networking
 * Network sample application configuration file unification, where most of the
   similar configuration files were merged together
 * Added Bluetooth support to HTTP(S) server sample application
-* BSD socket layer fixes and enhancements
+* BSD Socket compatible API layer, allowing to write and/or port simple
+  networking applications using a well-known, cross-platform API
 * Networking API documentation fixes
 * Network shell enhancements
 * Trickle algorithm fixes
+* Improvements to HTTP server and client libraries
 * CoAP API fixes
 * IPv6 fixes
 * RPL fixes
@@ -122,7 +137,9 @@ Documentation
 Tests and Samples
 *****************
 
-* change description
+* Added test Case to stress test round robin scheduling in schedule_api test.
+* Added test case to stress test priority scheduling in scheduling_api_test.
+
 
 JIRA Related Items
 ******************

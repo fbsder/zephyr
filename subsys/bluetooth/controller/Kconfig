@@ -112,6 +112,13 @@ config BT_CTLR_LE_ENC
 	# Enable support for Bluetooth v4.0 LE Encryption feature in the
 	# Controller.
 
+config BT_CTLR_CONN_PARAM_REQ
+	bool "Connection Parameter Request"
+	default y
+	help
+	  Enable support for Bluetooth v4.1 Connection Parameter Request feature
+	  in the Controller.
+
 config BT_CTLR_LE_PING
 	bool "LE Ping"
 	default y
@@ -175,6 +182,13 @@ config BT_CTLR_CHAN_SEL_2
 	help
 	  Enable support for Bluetooth 5.0 LE Channel Selection Algorithm #2 in
 	  the Controller.
+
+config BT_CTLR_MIN_USED_CHAN
+	bool "Minimum Number of Used Channels"
+	default y
+	help
+	  Enable support for Bluetooth 5.0 Minimum Number of Used Channels
+	  Procedure in the Controller.
 
 config BT_CTLR_ADV_EXT
 	bool "LE Advertising Extensions"
