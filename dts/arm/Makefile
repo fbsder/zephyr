@@ -5,6 +5,7 @@ dtb-$(CONFIG_BOARD_FRDM_KW41Z)		=	frdm_kw41z.dts_compiled
 dtb-$(CONFIG_BOARD_FRDM_KL25Z)		=	frdm_kl25z.dts_compiled
 dtb-$(CONFIG_BOARD_HEXIWEAR_K64)	=	hexiwear_k64.dts_compiled
 dtb-$(CONFIG_BOARD_HEXIWEAR_KW40Z)	=	hexiwear_kw40z.dts_compiled
+dtb-$(CONFIG_BOARD_USB_KW24D512)	=	usb_kw24d512.dts_compiled
 dtb-$(CONFIG_BOARD_CC3220SF_LAUNCHXL)	=	cc3220sf_launchxl.dts_compiled
 dtb-$(CONFIG_BOARD_NUCLEO_L476RG)	=	nucleo_l476rg.dts_compiled
 dtb-$(CONFIG_BOARD_NUCLEO_L432KC)	=	nucleo_l432kc.dts_compiled
@@ -25,6 +26,7 @@ dtb-$(CONFIG_BOARD_NUCLEO_F334R8)	=	nucleo_f334r8.dts_compiled
 dtb-$(CONFIG_BOARD_STM32373C_EVAL)	=	stm32373c_eval.dts_compiled
 dtb-$(CONFIG_BOARD_STM32F4_DISCO)	=	stm32f4_disco.dts_compiled
 dtb-$(CONFIG_BOARD_STM32F469I_DISCO)	=	stm32f469i_disco.dts_compiled
+dtb-$(CONFIG_BOARD_STM32F412G_DISCO)	=	stm32f412g_disco.dts_compiled
 dtb-$(CONFIG_BOARD_96B_NITROGEN)	=	96b_nitrogen.dts_compiled
 dtb-$(CONFIG_BOARD_NRF52_PCA10040)	=	nrf52_pca10040.dts_compiled
 dtb-$(CONFIG_BOARD_NRF52_VBLUNO52)	=	nrf52_vbluno52.dts_compiled
@@ -47,6 +49,7 @@ dtb-$(CONFIG_BOARD_STM32_MIN_DEV)	=	stm32_min_dev.dts_compiled
 dtb-$(CONFIG_BOARD_STM32F3_DISCO)       =       stm32f3_disco.dts_compiled
 dtb-$(CONFIG_BOARD_OLIMEX_STM32_P405)	=	olimex_stm32_p405.dts_compiled
 dtb-$(CONFIG_BOARD_STM32F429I_DISC1)	=	stm32f429i_disc1.dts_compiled
+dtb-$(CONFIG_BOARD_EFM32WG_STK3800)	=	efm32wg_stk3800.dts_compiled
 
 always	:= $(dtb-y)
 endif

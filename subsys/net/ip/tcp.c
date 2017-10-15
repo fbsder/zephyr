@@ -248,13 +248,11 @@ struct net_tcp *net_tcp_alloc(struct net_context *context)
 
 static void ack_timer_cancel(struct net_tcp *tcp)
 {
-	tcp->ack_timer_cancelled = true;
 	k_delayed_work_cancel(&tcp->ack_timer);
 }
 
 static void fin_timer_cancel(struct net_tcp *tcp)
 {
-	tcp->fin_timer_cancelled = true;
 	k_delayed_work_cancel(&tcp->fin_timer);
 }
 
@@ -335,6 +333,7 @@ static struct net_pkt *prepare_segment(struct net_tcp *tcp,
 	struct net_context *context = tcp->context;
 	struct net_tcp_hdr *tcp_hdr;
 	u16_t dst_port, src_port;
+	bool pkt_allocated;
 	u8_t optlen = 0;
 
 	NET_ASSERT(context);
@@ -347,11 +346,14 @@ static struct net_pkt *prepare_segment(struct net_tcp *tcp,
 		 */
 		tail = pkt->frags;
 		pkt->frags = NULL;
+		pkt_allocated = false;
 	} else {
 		pkt = net_pkt_get_tx(context, ALLOC_TIMEOUT);
 		if (!pkt) {
 			return NULL;
 		}
+
+		pkt_allocated = true;
 	}
 
 #if defined(CONFIG_NET_IPV4)
@@ -379,13 +381,20 @@ static struct net_pkt *prepare_segment(struct net_tcp *tcp,
 	{
 		NET_DBG("[%p] Protocol family %d not supported", tcp,
 			net_pkt_family(pkt));
-		net_pkt_unref(pkt);
+
+		if (pkt_allocated) {
+			net_pkt_unref(pkt);
+		}
+
 		return NULL;
 	}
 
 	header = net_pkt_get_data(context, ALLOC_TIMEOUT);
 	if (!header) {
-		net_pkt_unref(pkt);
+		if (pkt_allocated) {
+			net_pkt_unref(pkt);
+		}
+
 		return NULL;
 	}
 
@@ -414,7 +423,10 @@ static struct net_pkt *prepare_segment(struct net_tcp *tcp,
 	}
 
 	if (finalize_segment(context, pkt) < 0) {
-		net_pkt_unref(pkt);
+		if (pkt_allocated) {
+			net_pkt_unref(pkt);
+		}
+
 		return NULL;
 	}
 
@@ -567,7 +579,21 @@ u16_t net_tcp_get_recv_mss(const struct net_tcp *tcp)
 	}
 #if defined(CONFIG_NET_IPV6)
 	else if (family == AF_INET6) {
-		return 1280;
+		struct net_if *iface = net_context_get_iface(tcp->context);
+		int mss = 0;
+
+		if (iface && iface->mtu >= NET_IPV6TCPH_LEN) {
+			/* Detect MSS based on interface MTU minus "TCP,IP
+			 * header size"
+			 */
+			mss = iface->mtu - NET_IPV6TCPH_LEN;
+		}
+
+		if (mss < NET_IPV6_MTU) {
+			mss = NET_IPV6_MTU;
+		}
+
+		return mss;
 	}
 #endif /* CONFIG_NET_IPV6 */
 
@@ -731,7 +757,8 @@ int net_tcp_send_pkt(struct net_pkt *pkt)
 
 	tcp_hdr = net_tcp_get_hdr(pkt, &hdr);
 	if (!tcp_hdr) {
-		return -EINVAL;
+		NET_ERR("Packet %p does not contain TCP header", pkt);
+		return -EMSGSIZE;
 	}
 
 	if (sys_get_be32(tcp_hdr->ack) != ctx->tcp->send_ack) {
@@ -792,21 +819,10 @@ int net_tcp_send_pkt(struct net_pkt *pkt)
 		}
 
 		if (pkt_in_slist) {
-			new_pkt = net_pkt_get_tx(ctx, ALLOC_TIMEOUT);
+			new_pkt = net_pkt_clone(pkt, ALLOC_TIMEOUT);
 			if (!new_pkt) {
 				return -ENOMEM;
 			}
-
-			memcpy(new_pkt, pkt, sizeof(struct net_pkt));
-			new_pkt->frags = net_pkt_copy_all(pkt, 0,
-							  ALLOC_TIMEOUT);
-			if (!new_pkt->frags) {
-				net_pkt_unref(new_pkt);
-				return -ENOMEM;
-			}
-
-			NET_DBG("[%p] Copied %zu bytes from %p to %p", ctx->tcp,
-				net_pkt_get_len(new_pkt), pkt, new_pkt);
 
 			/* This function is called from net_context.c and if we
 			 * return < 0, the caller will unref the original pkt.
@@ -862,9 +878,15 @@ int net_tcp_send_data(struct net_context *context)
 		}
 
 		if (!net_pkt_sent(pkt)) {
-			NET_DBG("[%p] Sending pkt %p", context->tcp, pkt);
-			if (net_tcp_send_pkt(pkt) < 0 &&
-			    !is_6lo_technology(pkt)) {
+			int ret;
+
+			NET_DBG("[%p] Sending pkt %p (%zd bytes)", context->tcp,
+				pkt, net_pkt_get_len(pkt));
+
+			ret = net_tcp_send_pkt(pkt);
+			if (ret < 0 && !is_6lo_technology(pkt)) {
+				NET_DBG("[%p] pkt %p not sent (%d)",
+					context->tcp, pkt, ret);
 				net_pkt_unref(pkt);
 			}
 
@@ -896,6 +918,15 @@ void net_tcp_ack_received(struct net_context *ctx, u32_t ack)
 		pkt = CONTAINER_OF(head, struct net_pkt, sent_list);
 
 		tcp_hdr = net_tcp_get_hdr(pkt, &hdr);
+		if (!tcp_hdr) {
+			/* The pkt does not contain TCP header, this should
+			 * not happen.
+			 */
+			NET_ERR("pkt %p has no TCP header", pkt);
+			sys_slist_remove(list, NULL, head);
+			net_pkt_unref(pkt);
+			continue;
+		}
 
 		seq = sys_get_be32(tcp_hdr->seq) + net_pkt_appdatalen(pkt) - 1;
 

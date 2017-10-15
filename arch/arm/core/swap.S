@@ -175,6 +175,14 @@ _thread_irq_disabled:
     pop {r2, lr}
 #endif /* CONFIG_MPU_STACK_GUARD */
 
+#ifdef CONFIG_USERSPACE
+    /* r2 contains k_thread */
+    add r0, r2, #0
+    push {r2, lr}
+    blx configure_mpu_mem_domain
+    pop {r2, lr}
+#endif /* CONFIG_USERSPACE */
+
     /* load callee-saved + psp from thread */
     add r0, r2, #_thread_offset_to_callee_saved
     ldmia r0, {v1-v8, ip}
@@ -185,21 +193,18 @@ _thread_irq_disabled:
     msr PSP, ip
 
 #ifdef CONFIG_EXECUTION_BENCHMARKING
-#if defined(CONFIG_ARMV6_M)
-    push {r3}
-#endif
+    stm sp!,{r0-r3} /* Save regs r0 to r4 on stack */
     push {lr}
-
-    bl read_systick_end_of_swap
+    bl read_timer_end_of_swap
 
 #if defined(CONFIG_ARMV6_M)
     pop {r3}
     mov lr,r3
-    pop {r3}
 #else
     pop {lr}
-#endif
-#endif
+#endif /* CONFIG_ARMV6_M */
+    ldm sp!,{r0-r3} /* Load back regs ro to r4 */
+#endif /* CONFIG_EXECUTION_BENCHMARKING */
 
     /* exc return */
     bx lr
@@ -363,19 +368,15 @@ _oops:
 SECTION_FUNC(TEXT, __swap)
 
 #ifdef CONFIG_EXECUTION_BENCHMARKING
-#if defined(CONFIG_ARMV6_M)
-    push {r3}
-#endif
     push {lr}
-    bl read_systick_start_of_swap
+    bl read_timer_start_of_swap
 #if defined(CONFIG_ARMV6_M)
     pop {r3}
     mov lr,r3
-    pop {r3}
 #else
     pop {lr}
-#endif
-#endif
+#endif /* CONFIG_ARMV6_M */
+#endif /* CONFIG_EXECUTION_BENCHMARKING */
     ldr r1, =_kernel
     ldr r2, [r1, #_kernel_offset_to_current]
     str r0, [r2, #_thread_offset_to_basepri]

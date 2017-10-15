@@ -109,6 +109,9 @@ struct acl_data {
 	/** BT_BUF_ACL_IN */
 	u8_t  type;
 
+	/* Index into the bt_conn storage array */
+	u8_t  id;
+
 	/** ACL connection handle */
 	u16_t handle;
 };
@@ -133,6 +136,7 @@ static void report_completed_packet(struct net_buf *buf)
 	struct bt_hci_cp_host_num_completed_packets *cp;
 	u16_t handle = acl(buf)->handle;
 	struct bt_hci_handle_count *hc;
+	struct bt_conn *conn;
 
 	net_buf_destroy(buf);
 
@@ -140,6 +144,21 @@ static void report_completed_packet(struct net_buf *buf)
 	if (!(bt_dev.supported_commands[10] & 0x20)) {
 		return;
 	}
+
+	conn = bt_conn_lookup_id(acl(buf)->id);
+	if (!conn) {
+		BT_WARN("Unable to look up conn with id 0x%02x", acl(buf)->id);
+		return;
+	}
+
+	if (conn->state != BT_CONN_CONNECTED &&
+	    conn->state != BT_CONN_DISCONNECT) {
+		BT_WARN("Not reporting packet for non-connected conn");
+		bt_conn_unref(conn);
+		return;
+	}
+
+	bt_conn_unref(conn);
 
 	BT_DBG("Reporting completed packet for handle %u", handle);
 
@@ -458,6 +477,7 @@ static void hci_acl(struct net_buf *buf)
 	flags = bt_acl_flags(handle);
 
 	acl(buf)->handle = bt_acl_handle(handle);
+	acl(buf)->id = BT_CONN_ID_INVALID;
 
 	net_buf_pull(buf, sizeof(*hdr));
 
@@ -475,6 +495,8 @@ static void hci_acl(struct net_buf *buf)
 		net_buf_unref(buf);
 		return;
 	}
+
+	acl(buf)->id = bt_conn_get_id(conn);
 
 	bt_conn_recv(conn, buf, flags);
 	bt_conn_unref(conn);
@@ -2535,8 +2557,8 @@ static void hci_cmd_done(u16_t opcode, u8_t status, struct net_buf *buf)
 	BT_DBG("opcode 0x%04x status 0x%02x buf %p", opcode, status, buf);
 
 	if (net_buf_pool_get(buf->pool_id) != &hci_cmd_pool) {
-		BT_WARN("pool id %u pool %p != &hci_cmd_pool %p",
-			buf->pool_id, net_buf_pool_get(buf->pool_id),
+		BT_WARN("opcode 0x%04x pool id %u pool %p != &hci_cmd_pool %p",
+			opcode, buf->pool_id, net_buf_pool_get(buf->pool_id),
 			&hci_cmd_pool);
 		return;
 	}
@@ -3767,11 +3789,7 @@ static const char *ver_str(u8_t ver)
 
 static void show_dev_info(void)
 {
-	char addr[BT_ADDR_LE_STR_LEN];
-
-	bt_addr_le_to_str(&bt_dev.id_addr, addr, sizeof(addr));
-
-	BT_INFO("Identity: %s", addr);
+	BT_INFO("Identity: %s", bt_addr_le_str(&bt_dev.id_addr));
 	BT_INFO("HCI: version %s (0x%02x) revision 0x%04x, manufacturer 0x%04x",
 		ver_str(bt_dev.hci_version), bt_dev.hci_version,
 		bt_dev.hci_revision, bt_dev.manufacturer);

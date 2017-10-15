@@ -8,6 +8,7 @@
 #include <stddef.h>
 #include <zephyr/types.h>
 #include <string.h>
+#include <version.h>
 
 #include <soc.h>
 #include <toolchain.h>
@@ -26,6 +27,10 @@
 #include "ll_sw/ctrl.h"
 #include "ll.h"
 #include "hci_internal.h"
+
+#if defined(CONFIG_BT_CTLR_DTM_HCI)
+#include "ll_sw/ll_test.h"
+#endif /* CONFIG_BT_CTLR_DTM_HCI */
 
 #define BT_DBG_ENABLED IS_ENABLED(CONFIG_BT_DEBUG_HCI_DRIVER)
 #include "common/log.h"
@@ -503,6 +508,14 @@ static void read_supported_commands(struct net_buf *buf, struct net_buf **evt)
 	rp->commands[28] |= BIT(1) | BIT(2);
 #endif /* CONFIG_BT_CTLR_LE_ENC */
 #endif
+#if defined(CONFIG_BT_CTLR_DTM_HCI)
+	/* LE RX Test, LE TX Test, LE Test End */
+	rp->commands[28] |= BIT(4) | BIT(5) | BIT(6);
+	/* LE Enhanced RX Test. */
+	rp->commands[35] |= BIT(7);
+	/* LE Enhanced TX Test. */
+	rp->commands[36] |= BIT(0);
+#endif /* CONFIG_BT_CTLR_DTM_HCI */
 #if defined(CONFIG_BT_CONN)
 	/* Disconnect. */
 	rp->commands[0] |= BIT(5);
@@ -1343,6 +1356,70 @@ static void le_read_tx_power(struct net_buf *buf, struct net_buf **evt)
 	ll_tx_power_get(&rp->min_tx_power, &rp->max_tx_power);
 }
 
+#if defined(CONFIG_BT_CTLR_DTM_HCI)
+static void le_rx_test(struct net_buf *buf, struct net_buf **evt)
+{
+	struct bt_hci_cp_le_rx_test *cmd = (void *)buf->data;
+	struct bt_hci_evt_cc_status *ccst;
+	u32_t status;
+
+	status = ll_test_rx(cmd->rx_ch, 0x01, 0);
+
+	ccst = cmd_complete(evt, sizeof(*ccst));
+	ccst->status = status;
+}
+
+static void le_tx_test(struct net_buf *buf, struct net_buf **evt)
+{
+	struct bt_hci_cp_le_tx_test *cmd = (void *)buf->data;
+	struct bt_hci_evt_cc_status *ccst;
+	u32_t status;
+
+	status = ll_test_tx(cmd->tx_ch, cmd->test_data_len, cmd->pkt_payload,
+			    0x01);
+
+	ccst = cmd_complete(evt, sizeof(*ccst));
+	ccst->status = status;
+}
+
+static void le_test_end(struct net_buf *buf, struct net_buf **evt)
+{
+	struct bt_hci_rp_le_test_end *rp;
+	u16_t rx_pkt_count;
+
+	ll_test_end(&rx_pkt_count);
+
+	rp = cmd_complete(evt, sizeof(*rp));
+	rp->status = 0x00;
+	rp->rx_pkt_count = sys_cpu_to_le16(rx_pkt_count);
+}
+
+static void le_enh_rx_test(struct net_buf *buf, struct net_buf **evt)
+{
+	struct bt_hci_cp_le_enh_rx_test *cmd = (void *)buf->data;
+	struct bt_hci_evt_cc_status *ccst;
+	u32_t status;
+
+	status = ll_test_rx(cmd->rx_ch, cmd->phy, cmd->mod_index);
+
+	ccst = cmd_complete(evt, sizeof(*ccst));
+	ccst->status = status;
+}
+
+static void le_enh_tx_test(struct net_buf *buf, struct net_buf **evt)
+{
+	struct bt_hci_cp_le_enh_tx_test *cmd = (void *)buf->data;
+	struct bt_hci_evt_cc_status *ccst;
+	u32_t status;
+
+	status = ll_test_tx(cmd->tx_ch, cmd->test_data_len, cmd->pkt_payload,
+			    cmd->phy);
+
+	ccst = cmd_complete(evt, sizeof(*ccst));
+	ccst->status = status;
+}
+#endif /* CONFIG_BT_CTLR_DTM_HCI */
+
 static int controller_cmd_handle(u16_t  ocf, struct net_buf *cmd,
 				 struct net_buf **evt)
 {
@@ -1543,6 +1620,24 @@ static int controller_cmd_handle(u16_t  ocf, struct net_buf *cmd,
 		le_read_tx_power(cmd, evt);
 		break;
 
+#if defined(CONFIG_BT_CTLR_DTM_HCI)
+	case BT_OCF(BT_HCI_OP_LE_RX_TEST):
+		le_rx_test(cmd, evt);
+		break;
+	case BT_OCF(BT_HCI_OP_LE_TX_TEST):
+		le_tx_test(cmd, evt);
+		break;
+	case BT_OCF(BT_HCI_OP_LE_TEST_END):
+		le_test_end(cmd, evt);
+		break;
+	case BT_OCF(BT_HCI_OP_LE_ENH_RX_TEST):
+		le_enh_rx_test(cmd, evt);
+		break;
+	case BT_OCF(BT_HCI_OP_LE_ENH_TX_TEST):
+		le_enh_tx_test(cmd, evt);
+		break;
+#endif /* CONFIG_BT_CTLR_DTM_HCI */
+
 	default:
 		return -EINVAL;
 	}
@@ -1557,12 +1652,13 @@ static void vs_read_version_info(struct net_buf *buf, struct net_buf **evt)
 	rp = cmd_complete(evt, sizeof(*rp));
 
 	rp->status = 0x00;
-	rp->hw_platform = sys_cpu_to_le16(0);
-	rp->hw_variant = sys_cpu_to_le16(0);
+	rp->hw_platform = BT_HCI_VS_HW_PLAT;
+	rp->hw_variant = BT_HCI_VS_HW_VAR;
+
 	rp->fw_variant = 0;
-	rp->fw_version = 0;
-	rp->fw_revision = sys_cpu_to_le16(0);
-	rp->fw_build = sys_cpu_to_le32(0);
+	rp->fw_version = (KERNEL_VERSION_MAJOR & 0xff);
+	rp->fw_revision = KERNEL_VERSION_MINOR;
+	rp->fw_build = (KERNEL_PATCHLEVEL & 0xffff);
 }
 
 static void vs_read_supported_commands(struct net_buf *buf,
@@ -1577,6 +1673,12 @@ static void vs_read_supported_commands(struct net_buf *buf,
 
 	/* Set Version Information, Supported Commands, Supported Features. */
 	rp->commands[0] |= BIT(0) | BIT(1) | BIT(2);
+#if defined(CONFIG_BT_HCI_VS_EXT)
+	/* Write BD_ADDR, Read Build Info */
+	rp->commands[0] |= BIT(5) | BIT(7);
+	/* Read Static Addresses, Read Key Hierarchy Roots */
+	rp->commands[1] |= BIT(0) | BIT(1);
+#endif /* CONFIG_BT_HCI_VS_EXT */
 }
 
 static void vs_read_supported_features(struct net_buf *buf,
@@ -1589,6 +1691,129 @@ static void vs_read_supported_features(struct net_buf *buf,
 	rp->status = 0x00;
 	memset(&rp->features[0], 0x00, sizeof(rp->features));
 }
+
+#if defined(CONFIG_BT_HCI_VS_EXT)
+static void vs_write_bd_addr(struct net_buf *buf, struct net_buf **evt)
+{
+	struct bt_hci_cp_vs_write_bd_addr *cmd = (void *)buf->data;
+	struct bt_hci_evt_cc_status *ccst;
+
+	ll_addr_set(0, &cmd->bdaddr.val[0]);
+
+	ccst = cmd_complete(evt, sizeof(*ccst));
+	ccst->status = 0x00;
+}
+
+static void vs_read_build_info(struct net_buf *buf, struct net_buf **evt)
+{
+	struct bt_hci_rp_vs_read_build_info *rp;
+
+#define BUILD_TIMESTAMP " " __DATE__ " " __TIME__
+
+#define HCI_VS_BUILD_INFO "Zephyr OS v" \
+	KERNEL_VERSION_STRING BUILD_TIMESTAMP CONFIG_BT_CTLR_HCI_VS_BUILD_INFO
+
+	const char build_info[] = HCI_VS_BUILD_INFO;
+
+#define BUILD_INFO_EVT_LEN (sizeof(struct bt_hci_evt_hdr) + \
+			    sizeof(struct bt_hci_evt_cmd_complete) + \
+			    sizeof(struct bt_hci_rp_vs_read_build_info) + \
+			    sizeof(build_info))
+
+	BUILD_ASSERT(CONFIG_BT_RX_BUF_LEN >= BUILD_INFO_EVT_LEN);
+
+	rp = cmd_complete(evt, sizeof(*rp) + sizeof(build_info));
+	rp->status = 0x00;
+	memcpy(rp->info, build_info, sizeof(build_info));
+}
+
+static void vs_read_static_addrs(struct net_buf *buf, struct net_buf **evt)
+{
+	struct bt_hci_rp_vs_read_static_addrs *rp;
+
+#if defined(CONFIG_SOC_FAMILY_NRF5)
+	/* Read address from nRF5-specific storage
+	 * Non-initialized FICR values default to 0xFF, skip if no address
+	 * present. Also if a public address lives in FICR, do not use in this
+	 * function.
+	 */
+	if (((NRF_FICR->DEVICEADDR[0] != UINT32_MAX) ||
+	    ((NRF_FICR->DEVICEADDR[1] & UINT16_MAX) != UINT16_MAX)) &&
+	      (NRF_FICR->DEVICEADDRTYPE & 0x01)) {
+		struct bt_hci_vs_static_addr *addr;
+
+		rp = cmd_complete(evt, sizeof(*rp) + sizeof(*addr));
+		rp->status = 0x00;
+		rp->num_addrs = 1;
+
+		addr = &rp->a[0];
+		sys_put_le32(NRF_FICR->DEVICEADDR[0], &addr->bdaddr.val[0]);
+		sys_put_le16(NRF_FICR->DEVICEADDR[1], &addr->bdaddr.val[4]);
+		/* The FICR value is a just a random number, with no knowledge
+		 * of the Bluetooth Specification requirements for random
+		 * static addresses.
+		 */
+		BT_ADDR_SET_STATIC(&addr->bdaddr);
+
+		/* Mark IR as invalid */
+		memset(addr->ir, 0x00, sizeof(addr->ir));
+
+		return;
+	}
+#endif /* CONFIG_SOC_FAMILY_NRF5 */
+
+	rp = cmd_complete(evt, sizeof(*rp));
+	rp->status = 0x00;
+	rp->num_addrs = 0;
+}
+
+static void vs_read_key_hierarchy_roots(struct net_buf *buf,
+					struct net_buf **evt)
+{
+	struct bt_hci_rp_vs_read_key_hierarchy_roots *rp;
+
+	rp = cmd_complete(evt, sizeof(*rp));
+	rp->status = 0x00;
+
+#if defined(CONFIG_SOC_FAMILY_NRF5)
+	/* Fill in IR if present */
+	if ((NRF_FICR->IR[0] != UINT32_MAX) &&
+	    (NRF_FICR->IR[1] != UINT32_MAX) &&
+	    (NRF_FICR->IR[2] != UINT32_MAX) &&
+	    (NRF_FICR->IR[3] != UINT32_MAX)) {
+		sys_put_le32(NRF_FICR->IR[0], &rp->ir[0]);
+		sys_put_le32(NRF_FICR->IR[1], &rp->ir[4]);
+		sys_put_le32(NRF_FICR->IR[2], &rp->ir[8]);
+		sys_put_le32(NRF_FICR->IR[3], &rp->ir[12]);
+	} else {
+		/* Mark IR as invalid */
+		memset(rp->ir, 0x00, sizeof(rp->ir));
+	}
+
+	/* Fill in ER if present */
+	if ((NRF_FICR->ER[0] != UINT32_MAX) &&
+	    (NRF_FICR->ER[1] != UINT32_MAX) &&
+	    (NRF_FICR->ER[2] != UINT32_MAX) &&
+	    (NRF_FICR->ER[3] != UINT32_MAX)) {
+		sys_put_le32(NRF_FICR->ER[0], &rp->er[0]);
+		sys_put_le32(NRF_FICR->ER[1], &rp->er[4]);
+		sys_put_le32(NRF_FICR->ER[2], &rp->er[8]);
+		sys_put_le32(NRF_FICR->ER[3], &rp->er[12]);
+	} else {
+		/* Mark ER as invalid */
+		memset(rp->er, 0x00, sizeof(rp->er));
+	}
+
+	return;
+#else
+	/* Mark IR as invalid */
+	memset(rp->ir, 0x00, sizeof(rp->ir));
+	/* Mark ER as invalid */
+	memset(rp->er, 0x00, sizeof(rp->er));
+#endif /* CONFIG_SOC_FAMILY_NRF5 */
+}
+
+#endif /* CONFIG_BT_HCI_VS_EXT */
 
 static int vendor_cmd_handle(u16_t ocf, struct net_buf *cmd,
 			     struct net_buf **evt)
@@ -1606,11 +1831,44 @@ static int vendor_cmd_handle(u16_t ocf, struct net_buf *cmd,
 		vs_read_supported_features(cmd, evt);
 		break;
 
+#if defined(CONFIG_BT_HCI_VS_EXT)
+	case BT_OCF(BT_HCI_OP_VS_READ_BUILD_INFO):
+		vs_read_build_info(cmd, evt);
+		break;
+
+	case BT_OCF(BT_HCI_OP_VS_WRITE_BD_ADDR):
+		vs_write_bd_addr(cmd, evt);
+		break;
+
+	case BT_OCF(BT_HCI_OP_VS_READ_STATIC_ADDRS):
+		vs_read_static_addrs(cmd, evt);
+		break;
+
+	case BT_OCF(BT_HCI_OP_VS_READ_KEY_HIERARCHY_ROOTS):
+		vs_read_key_hierarchy_roots(cmd, evt);
+		break;
+#endif /* CONFIG_BT_HCI_VS_EXT */
+
 	default:
 		return -EINVAL;
 	}
 
 	return 0;
+}
+
+static void data_buf_overflow(struct net_buf **buf)
+{
+	struct bt_hci_evt_data_buf_overflow *ep;
+
+	if (!(event_mask & BT_EVT_MASK_DATA_BUFFER_OVERFLOW)) {
+		return;
+	}
+
+	*buf = bt_buf_get_rx(BT_BUF_EVT, K_FOREVER);
+	evt_create(*buf, BT_HCI_EVT_DATA_BUF_OVERFLOW, sizeof(*ep));
+	ep = net_buf_add(*buf, sizeof(*ep));
+
+	ep->link_type = BT_OVERFLOW_LINK_ACL;
 }
 
 struct net_buf *hci_cmd_handle(struct net_buf *cmd)
@@ -1671,7 +1929,7 @@ struct net_buf *hci_cmd_handle(struct net_buf *cmd)
 	return evt;
 }
 
-int hci_acl_handle(struct net_buf *buf)
+int hci_acl_handle(struct net_buf *buf, struct net_buf **evt)
 {
 	struct radio_pdu_node_tx *radio_pdu_node_tx;
 	struct bt_hci_acl_hdr *acl;
@@ -1679,6 +1937,8 @@ int hci_acl_handle(struct net_buf *buf)
 	u16_t handle;
 	u8_t flags;
 	u16_t len;
+
+	*evt = NULL;
 
 	if (buf->len < sizeof(*acl)) {
 		BT_ERR("No HCI ACL header");
@@ -1702,6 +1962,7 @@ int hci_acl_handle(struct net_buf *buf)
 	radio_pdu_node_tx = radio_tx_mem_acquire();
 	if (!radio_pdu_node_tx) {
 		BT_ERR("Tx Buffer Overflow");
+		data_buf_overflow(evt);
 		return -ENOBUFS;
 	}
 

@@ -74,6 +74,8 @@ const char *net_ipv6_nbr_state2str(enum net_ipv6_nbr_state state)
 		return "delay";
 	case NET_IPV6_NBR_STATE_PROBE:
 		return "probe";
+	case NET_IPV6_NBR_STATE_STATIC:
+		return "static";
 	}
 
 	return "<invalid state>";
@@ -82,7 +84,8 @@ const char *net_ipv6_nbr_state2str(enum net_ipv6_nbr_state state)
 static void ipv6_nbr_set_state(struct net_nbr *nbr,
 			       enum net_ipv6_nbr_state new_state)
 {
-	if (new_state == net_ipv6_nbr_data(nbr)->state) {
+	if (new_state == net_ipv6_nbr_data(nbr)->state ||
+	    net_ipv6_nbr_data(nbr)->state == NET_IPV6_NBR_STATE_STATIC) {
 		return;
 	}
 
@@ -143,19 +146,38 @@ static inline struct net_nbr *get_nbr_from_data(struct net_ipv6_nbr_data *data)
 	return NULL;
 }
 
-void net_ipv6_nbr_foreach(net_nbr_cb_t cb, void *user_data)
+struct iface_cb_data {
+	net_nbr_cb_t cb;
+	void *user_data;
+};
+
+static void iface_cb(struct net_if *iface, void *user_data)
 {
+	struct iface_cb_data *data = user_data;
 	int i;
 
 	for (i = 0; i < CONFIG_NET_IPV6_MAX_NEIGHBORS; i++) {
 		struct net_nbr *nbr = get_nbr(i);
 
-		if (!nbr->ref) {
+		if (!nbr->ref || nbr->iface != iface) {
 			continue;
 		}
 
-		cb(nbr, user_data);
+		data->cb(nbr, data->user_data);
 	}
+}
+
+void net_ipv6_nbr_foreach(net_nbr_cb_t cb, void *user_data)
+{
+	struct iface_cb_data cb_data = {
+		.cb = cb,
+		.user_data = user_data,
+	};
+
+	/* Return the neighbors according to network interface. This makes it
+	 * easier in the callback to use the neighbor information.
+	 */
+	net_if_foreach(iface_cb, &cb_data);
 }
 
 #if NET_DEBUG_NBR
@@ -222,12 +244,7 @@ struct net_ipv6_nbr_data *net_ipv6_get_nbr_by_index(u8_t idx)
 
 static inline void nbr_clear_ns_pending(struct net_ipv6_nbr_data *data)
 {
-	int ret;
-
-	ret = k_delayed_work_cancel(&data->send_ns);
-	if (ret < 0) {
-		NET_DBG("Cannot cancel NS work (%d)", ret);
-	}
+	k_delayed_work_cancel(&data->send_ns);
 
 	if (data->pending) {
 		net_pkt_unref(data->pending);
@@ -432,7 +449,8 @@ struct net_nbr *net_ipv6_nbr_add(struct net_if *iface,
 		}
 	}
 
-	if (net_nbr_link(nbr, iface, lladdr) == -EALREADY) {
+	if (net_nbr_link(nbr, iface, lladdr) == -EALREADY &&
+	    net_ipv6_nbr_data(nbr)->state != NET_IPV6_NBR_STATE_STATIC) {
 		/* Update the lladdr if the node was already known */
 		struct net_linkaddr_storage *cached_lladdr;
 
@@ -458,10 +476,11 @@ struct net_nbr *net_ipv6_nbr_add(struct net_if *iface,
 		net_ipv6_send_ns(iface, NULL, NULL, NULL, addr, false);
 	}
 
-	NET_DBG("[%d] nbr %p state %d router %d IPv6 %s ll %s",
+	NET_DBG("[%d] nbr %p state %d router %d IPv6 %s ll %s iface %p",
 		nbr->idx, nbr, state, is_router,
 		net_sprint_ipv6_addr(addr),
-		net_sprint_ll_addr(lladdr->addr, lladdr->len));
+		net_sprint_ll_addr(lladdr->addr, lladdr->len),
+		nbr->iface);
 
 	return nbr;
 }
@@ -852,8 +871,29 @@ struct net_pkt *net_ipv6_prepare_for_send(struct net_pkt *pkt)
 							   pkt, pkt_len);
 			if (ret < 0) {
 				NET_DBG("Cannot fragment IPv6 pkt (%d)", ret);
-				net_pkt_unref(pkt);
+
+				if (ret == -ENOMEM) {
+					/* Try to send the packet if we could
+					 * not allocate enough network packets
+					 * and hope the original large packet
+					 * can be sent ok.
+					 */
+					goto ignore_frag_error;
+				}
 			}
+
+			/* We "fake" the sending of the packet here so that
+			 * tcp.c:tcp_retry_expired() will increase the ref
+			 * count when re-sending the packet. This is crucial
+			 * thing to do here and will cause free memory access
+			 * if not done.
+			 */
+			net_pkt_set_sent(pkt, true);
+
+			/* We need to unref here because we simulate the packet
+			 * sending.
+			 */
+			net_pkt_unref(pkt);
 
 			/* No need to continue with the sending as the packet
 			 * is now split and its fragments will be sent
@@ -862,6 +902,7 @@ struct net_pkt *net_ipv6_prepare_for_send(struct net_pkt *pkt)
 			return NULL;
 		}
 	}
+ignore_frag_error:
 #endif /* CONFIG_NET_IPV6_FRAGMENT */
 
 	/* Workaround Linux bug, see:
@@ -1126,8 +1167,8 @@ static inline void handle_ns_neighbor(struct net_pkt *pkt, u8_t ll_len,
 	nbr_add(pkt, &nbr_lladdr, false, NET_IPV6_NBR_STATE_INCOMPLETE);
 }
 
-int net_ipv6_send_na(struct net_if *iface, struct in6_addr *src,
-		     struct in6_addr *dst, struct in6_addr *tgt,
+int net_ipv6_send_na(struct net_if *iface, const struct in6_addr *src,
+		     const struct in6_addr *dst, const struct in6_addr *tgt,
 		     u8_t flags)
 {
 	struct net_icmpv6_na_hdr hdr, *na_hdr;
@@ -1400,6 +1441,9 @@ static void nd_reachable_timeout(struct k_work *work)
 	}
 
 	switch (data->state) {
+	case NET_IPV6_NBR_STATE_STATIC:
+		NET_ASSERT_INFO(false, "Static entry shall never timeout");
+		break;
 
 	case NET_IPV6_NBR_STATE_INCOMPLETE:
 		if (data->ns_count >= MAX_MULTICAST_SOLICIT) {
@@ -2611,6 +2655,8 @@ int net_ipv6_mld_join(struct net_if *iface, const struct in6_addr *addr)
 
 	net_if_ipv6_maddr_join(maddr);
 
+	net_if_mcast_monitor(iface, addr, true);
+
 	net_mgmt_event_notify(NET_EVENT_IPV6_MCAST_JOIN, iface);
 
 	return ret;
@@ -2628,6 +2674,8 @@ int net_ipv6_mld_leave(struct net_if *iface, const struct in6_addr *addr)
 	if (ret < 0) {
 		return ret;
 	}
+
+	net_if_mcast_monitor(iface, addr, false);
 
 	net_mgmt_event_notify(NET_EVENT_IPV6_MCAST_LEAVE, iface);
 
@@ -3436,13 +3484,16 @@ free_pkts:
 	return ret;
 }
 
+#define BUF_ALLOC_TIMEOUT 100
+
 int net_ipv6_send_fragmented_pkt(struct net_if *iface, struct net_pkt *pkt,
 				 u16_t pkt_len)
 {
-	struct net_buf *frag = pkt->frags;
-	struct net_buf *prev = NULL;
 	struct net_buf *orig_ipv6 = NULL;
+	struct net_buf *prev = NULL;
 	struct net_buf *rest;
+	struct net_buf *frag;
+	struct net_pkt *clone;
 	int frag_count = 0;
 	int curr_len = 0;
 	int status = false;
@@ -3451,6 +3502,20 @@ int net_ipv6_send_fragmented_pkt(struct net_if *iface, struct net_pkt *pkt,
 	u8_t next_hdr;
 	u16_t next_hdr_idx, last_hdr_idx;
 	int ret;
+
+	/* We cannot touch original pkt because it might be used for
+	 * some other purposes, like TCP resend etc. So we need to copy
+	 * the large pkt here and do the fragmenting with the clone.
+	 */
+	clone = net_pkt_clone(pkt, BUF_ALLOC_TIMEOUT);
+	if (!clone) {
+		NET_DBG("Cannot clone %p", pkt);
+		return -ENOMEM;
+	}
+
+	pkt = clone;
+
+	frag = pkt->frags;
 
 	ret = get_next_hdr(pkt, &next_hdr_idx, &last_hdr_idx, &next_hdr);
 	if (ret < 0) {

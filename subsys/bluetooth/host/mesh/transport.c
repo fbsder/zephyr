@@ -529,6 +529,7 @@ static int sdu_recv(struct bt_mesh_net_rx *rx, u8_t hdr, u8_t mic_size,
 		}
 
 		bt_mesh_model_recv(rx, sdu);
+		return 0;
 	}
 
 	BT_WARN("No matching AppKey");
@@ -979,7 +980,7 @@ static int trans_seg(struct net_buf_simple *buf, struct bt_mesh_net_rx *net_rx)
 	}
 
 	/* Bail out early if we're not ready to receive such a large SDU */
-	if (!sdu_len_is_ok(&net_rx->ctx, seg_n)) {
+	if (!sdu_len_is_ok(net_rx->ctl, seg_n)) {
 		BT_ERR("Too big incoming SDU length");
 		send_ack(net_rx->sub, net_rx->dst, net_rx->ctx.addr,
 			 net_rx->ctx.send_ttl, seq_zero, 0);

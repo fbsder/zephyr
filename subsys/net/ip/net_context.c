@@ -100,7 +100,6 @@ static struct tcp_backlog_entry {
 	u32_t send_seq;
 	u32_t send_ack;
 	struct k_delayed_work ack_timer;
-	bool cancelled;
 } tcp_backlog[CONFIG_NET_TCP_BACKLOG_SIZE];
 
 static void backlog_ack_timeout(struct k_work *work)
@@ -108,11 +107,9 @@ static void backlog_ack_timeout(struct k_work *work)
 	struct tcp_backlog_entry *backlog =
 		CONTAINER_OF(work, struct tcp_backlog_entry, ack_timer);
 
-	if (!backlog->cancelled) {
-		NET_DBG("Did not receive ACK in %dms", ACK_TIMEOUT);
+	NET_DBG("Did not receive ACK in %dms", ACK_TIMEOUT);
 
-		send_reset(backlog->tcp->context, &backlog->remote);
-	}
+	send_reset(backlog->tcp->context, &backlog->remote);
 
 	memset(backlog, 0, sizeof(struct tcp_backlog_entry));
 }
@@ -262,20 +259,11 @@ static int tcp_backlog_ack(struct net_pkt *pkt, struct net_context *context)
 	memcpy(&context->remote, &tcp_backlog[r].remote,
 		sizeof(struct sockaddr));
 	context->tcp->recv_max_ack = tcp_backlog[r].recv_max_ack;
-	context->tcp->send_seq = tcp_backlog[r].send_seq;
+	context->tcp->send_seq = tcp_backlog[r].send_seq + 1;
 	context->tcp->send_ack = tcp_backlog[r].send_ack;
 
-	if (k_delayed_work_cancel(&tcp_backlog[r].ack_timer) < 0) {
-		/* Too late to cancel - just set flag for worker.
-		 * TODO: Note that in this case, we can be preempted
-		 * anytime (could have been preempted even before we did
-		 * the check), so access to tcp_backlog should be synchronized
-		 * between this function and worker.
-		 */
-		tcp_backlog[r].cancelled = true;
-	} else {
-		memset(&tcp_backlog[r], 0, sizeof(struct tcp_backlog_entry));
-	}
+	k_delayed_work_cancel(&tcp_backlog[r].ack_timer);
+	memset(&tcp_backlog[r], 0, sizeof(struct tcp_backlog_entry));
 
 	return 0;
 }
@@ -300,17 +288,8 @@ static int tcp_backlog_rst(struct net_pkt *pkt)
 		return -EINVAL;
 	}
 
-	if (k_delayed_work_cancel(&tcp_backlog[r].ack_timer) < 0) {
-		/* Too late to cancel - just set flag for worker.
-		 * TODO: Note that in this case, we can be preempted
-		 * anytime (could have been preempted even before we did
-		 * the check), so access to tcp_backlog should be synchronized
-		 * between this function and worker.
-		 */
-		tcp_backlog[r].cancelled = true;
-	} else {
-		memset(&tcp_backlog[r], 0, sizeof(struct tcp_backlog_entry));
-	}
+	k_delayed_work_cancel(&tcp_backlog[r].ack_timer);
+	memset(&tcp_backlog[r], 0, sizeof(struct tcp_backlog_entry));
 
 	return 0;
 }
@@ -320,21 +299,15 @@ static void handle_fin_timeout(struct k_work *work)
 	struct net_tcp *tcp =
 		CONTAINER_OF(work, struct net_tcp, fin_timer);
 
-	if (!tcp->fin_timer_cancelled) {
-		NET_DBG("Did not receive FIN in %dms", FIN_TIMEOUT);
+	NET_DBG("Did not receive FIN in %dms", FIN_TIMEOUT);
 
-		net_context_unref(tcp->context);
-	}
+	net_context_unref(tcp->context);
 }
 
 static void handle_ack_timeout(struct k_work *work)
 {
 	/* This means that we did not receive ACK response in time. */
 	struct net_tcp *tcp = CONTAINER_OF(work, struct net_tcp, ack_timer);
-
-	if (tcp->ack_timer_cancelled) {
-		return;
-	}
 
 	NET_DBG("Did not receive ACK in %dms while in %s", ACK_TIMEOUT,
 		net_tcp_state_str(net_tcp_get_state(tcp)));
@@ -641,13 +614,8 @@ int net_context_unref(struct net_context *context)
 				continue;
 			}
 
-			if (k_delayed_work_cancel(&tcp_backlog[i].ack_timer) ==
-							    -EINPROGRESS) {
-				tcp_backlog[i].cancelled = true;
-			} else {
-				memset(&tcp_backlog[i], 0,
-				       sizeof(struct tcp_backlog_entry));
-			}
+			k_delayed_work_cancel(&tcp_backlog[i].ack_timer);
+			memset(&tcp_backlog[i], 0, sizeof(tcp_backlog[i]));
 		}
 
 		net_tcp_release(context->tcp);
@@ -701,7 +669,6 @@ int net_context_put(struct net_context *context)
 				"disposing yet (waiting %dms)", FIN_TIMEOUT);
 			k_delayed_work_submit(&context->tcp->fin_timer,
 					      FIN_TIMEOUT);
-			context->tcp->fin_timer_cancelled = false;
 			queue_fin(context);
 			return 0;
 		}
@@ -864,8 +831,8 @@ int net_context_bind(struct net_context *context, const struct sockaddr *addr,
 #if defined(CONFIG_NET_IPV4)
 	if (addr->sa_family == AF_INET) {
 		struct sockaddr_in *addr4 = (struct sockaddr_in *)addr;
+		struct net_if *iface = NULL;
 		struct net_if_addr *ifaddr;
-		struct net_if *iface;
 		struct in_addr *ptr;
 		int ret;
 
@@ -873,7 +840,18 @@ int net_context_bind(struct net_context *context, const struct sockaddr *addr,
 			return -EINVAL;
 		}
 
-		if (addr4->sin_addr.s_addr == INADDR_ANY) {
+		if (net_is_ipv4_addr_mcast(&addr4->sin_addr)) {
+			struct net_if_mcast_addr *maddr;
+
+			maddr = net_if_ipv4_maddr_lookup(&addr4->sin_addr,
+							 &iface);
+			if (!maddr) {
+				return -ENOENT;
+			}
+
+			ptr = &maddr->address.in_addr;
+
+		} else if (addr4->sin_addr.s_addr == INADDR_ANY) {
 			iface = net_if_get_default();
 
 			ptr = (struct in_addr *)net_ipv4_unspecified_address();
@@ -1247,7 +1225,6 @@ NET_CONN_CB(tcp_established)
 		 * would be stuck forever.
 		 */
 		k_delayed_work_submit(&context->tcp->ack_timer, ACK_TIMEOUT);
-		context->tcp->ack_timer_cancelled = false;
 	}
 
 	send_ack(context, &conn->remote_addr, false);
@@ -1740,7 +1717,7 @@ NET_CONN_CB(tcp_syn_rcvd)
 		struct net_context *new_context;
 		struct sockaddr local_addr;
 		struct sockaddr remote_addr;
-		struct net_tcp *tmp_tcp;
+		struct net_tcp *new_tcp;
 		socklen_t addrlen;
 		int ret;
 
@@ -1848,22 +1825,20 @@ NET_CONN_CB(tcp_syn_rcvd)
 		}
 
 		/* Swap the newly-created TCP states with the one that
-		 * was used to establish this connection. The new TCP
+		 * was used to establish this connection. The old TCP
 		 * must be listening to accept other connections.
 		 */
-		tmp_tcp = new_context->tcp;
-		tmp_tcp->accept_cb = tcp->accept_cb;
-		tcp->accept_cb = NULL;
-		new_context->tcp = tcp;
+		new_tcp = new_context->tcp;
+		new_tcp->accept_cb = NULL;
 		copy_pool_vars(new_context, context);
-		context->tcp = tmp_tcp;
 
-		tcp->context = new_context;
-		tmp_tcp->context = context;
+		net_tcp_change_state(tcp, NET_TCP_LISTEN);
 
-		net_tcp_change_state(tmp_tcp, NET_TCP_LISTEN);
+		/* We cannot use net_tcp_change_state() here as that will
+		 * check the state transitions. So set the state directly.
+		 */
+		new_context->tcp->state = NET_TCP_ESTABLISHED;
 
-		net_tcp_change_state(new_context->tcp, NET_TCP_ESTABLISHED);
 		net_context_set_state(new_context, NET_CONTEXT_CONNECTED);
 
 		context->tcp->accept_cb(new_context,
@@ -2109,6 +2084,16 @@ static int sendto(struct net_pkt *pkt,
 	}
 #endif /* CONFIG_NET_TCP */
 
+#if defined(CONFIG_NET_UDP)
+	/* Bind default address and port only if UDP */
+	if (net_context_get_ip_proto(context) == IPPROTO_UDP) {
+		ret = bind_default(context);
+		if (ret) {
+			return ret;
+		}
+	}
+#endif /* CONFIG_NET_UDP */
+
 	if (!dst_addr) {
 		return -EDESTADDRREQ;
 	}
@@ -2346,6 +2331,11 @@ static int recv_udp(struct net_context *context,
 	if (context->conn_handler) {
 		net_conn_unregister(context->conn_handler);
 		context->conn_handler = NULL;
+	}
+
+	ret = bind_default(context);
+	if (ret) {
+		return ret;
 	}
 
 #if defined(CONFIG_NET_IPV6)

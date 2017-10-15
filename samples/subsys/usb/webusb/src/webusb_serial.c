@@ -44,9 +44,9 @@
 #include <string.h>
 #include <misc/byteorder.h>
 #include <logging/sys_log.h>
-#include "cdc_acm.h"
-#include "usb_device.h"
-#include "usb_common.h"
+#include <usb/class/cdc_acm.h>
+#include <usb/usb_device.h>
+#include <usb/usb_common.h>
 #include "webusb_serial.h"
 
 #ifndef CONFIG_UART_INTERRUPT_DRIVEN
@@ -488,10 +488,13 @@ static void webusb_serial_int_in(u8_t ep,
  *
  * @return  N/A.
  */
-static void webusb_serial_dev_status_cb(enum usb_dc_status_code status)
+static void webusb_serial_dev_status_cb(enum usb_dc_status_code status,
+					u8_t *param)
 {
 	struct webusb_serial_dev_data_t * const dev_data =
 	    DEV_DATA(webusb_serial_dev);
+
+	ARG_UNUSED(param);
 
 	/* Store the new status */
 	dev_data->usb_status = status;

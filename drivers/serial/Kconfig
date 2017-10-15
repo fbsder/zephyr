@@ -101,4 +101,6 @@ source "drivers/serial/Kconfig.esp32"
 
 source "drivers/serial/Kconfig.atmel_samr21"
 
+source "drivers/serial/Kconfig.gecko"
+
 endif

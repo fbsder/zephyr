@@ -263,10 +263,8 @@ static void tx_packet_set(struct connection *conn,
 static void prepare_pdu_data_tx(struct connection *conn,
 				struct pdu_data **pdu_data_tx);
 static void packet_rx_allocate(u8_t max);
-
-static u8_t packet_rx_acquired_count_get(void);
-
-static struct radio_pdu_node_rx *packet_rx_reserve_get(u8_t count);
+static inline u8_t packet_rx_acquired_count_get(void);
+static inline struct radio_pdu_node_rx *packet_rx_reserve_get(u8_t count);
 static void packet_rx_enqueue(void);
 static void packet_tx_enqueue(u8_t max);
 static struct pdu_data *empty_tx_enqueue(struct connection *conn);
@@ -446,7 +444,14 @@ u32_t radio_init(void *hf_clock, u8_t sca, u8_t connection_count_max,
 	chan_sel_2_ut();
 #endif /* RADIO_UNIT_TEST && CONFIG_BT_CTLR_CHAN_SEL_2 */
 
+	radio_setup();
+
 	return retcode;
+}
+
+struct device *radio_hf_clock_get(void)
+{
+	return _radio.hf_clock;
 }
 
 void ll_reset(void)
@@ -482,8 +487,13 @@ void ll_reset(void)
 	_radio.packet_release_first = 0;
 	_radio.packet_release_last = 0;
 
+	/* reset FC feature */
+	/* TODO: remove this feature related all code in the future */
+	_radio.fc_ack = _radio.fc_req;
+
 	/* reset whitelist and resolving list */
 	ll_filter_reset(false);
+
 	/* memory allocations */
 	common_init();
 }
@@ -600,6 +610,10 @@ static inline void isr_radio_state_tx(void)
 
 	radio_tmr_tifs_set(RADIO_TIFS);
 
+#if defined(CONFIG_BT_CTLR_GPIO_LNA_PIN)
+	radio_gpio_lna_setup();
+#endif /* CONFIG_BT_CTLR_GPIO_LNA_PIN */
+
 	switch (_radio.role) {
 	case ROLE_ADV:
 		radio_switch_complete_and_tx(0, 0, 0, 0);
@@ -621,12 +635,21 @@ static inline void isr_radio_state_tx(void)
 		hcto -= radio_tx_chain_delay_get(0, 0);
 
 		radio_tmr_hcto_configure(hcto);
+
+		/* capture end of CONNECT_IND PDU, used for calculating first
+		 * slave event.
+		 */
 		radio_tmr_end_capture();
 
 #if defined(CONFIG_BT_CTLR_SCAN_REQ_RSSI)
 		radio_rssi_measure();
 #endif /* CONFIG_BT_CTLR_SCAN_REQ_RSSI */
 
+#if defined(CONFIG_BT_CTLR_GPIO_LNA_PIN)
+		radio_gpio_pa_lna_enable(radio_tmr_end_get() + RADIO_TIFS - 4 -
+					 radio_tx_chain_delay_get(0, 0) -
+					 CONFIG_BT_CTLR_GPIO_LNA_OFFSET);
+#endif /* CONFIG_BT_CTLR_GPIO_LNA_PIN */
 		break;
 
 	case ROLE_SCAN:
@@ -652,6 +675,11 @@ static inline void isr_radio_state_tx(void)
 		radio_tmr_hcto_configure(hcto);
 		radio_rssi_measure();
 
+#if defined(CONFIG_BT_CTLR_GPIO_LNA_PIN)
+		radio_gpio_pa_lna_enable(radio_tmr_end_get() + RADIO_TIFS - 4 -
+					 radio_tx_chain_delay_get(0, 0) -
+					 CONFIG_BT_CTLR_GPIO_LNA_OFFSET);
+#endif /* CONFIG_BT_CTLR_GPIO_LNA_PIN */
 		break;
 
 	case ROLE_MASTER:
@@ -684,7 +712,7 @@ static inline void isr_radio_state_tx(void)
 		hcto += radio_rx_chain_delay_get(_radio.conn_curr->phy_rx,
 						 _radio.conn_curr->phy_flags);
 		hcto += addr_us_get(_radio.conn_curr->phy_rx);
-		hcto -= radio_tx_chain_delay_get(_radio.conn_curr->phy_rx,
+		hcto -= radio_tx_chain_delay_get(_radio.conn_curr->phy_tx,
 						 _radio.conn_curr->phy_flags);
 #else /* !CONFIG_BT_CTLR_PHY */
 		hcto += radio_rx_chain_delay_get(0, 0);
@@ -693,7 +721,25 @@ static inline void isr_radio_state_tx(void)
 #endif /* !CONFIG_BT_CTLR_PHY */
 
 		radio_tmr_hcto_configure(hcto);
+
+#if defined(CONFIG_BT_CTLR_GPIO_LNA_PIN)
+#if defined(CONFIG_BT_CTLR_PHY)
+		radio_gpio_pa_lna_enable(radio_tmr_end_get() + RADIO_TIFS - 4 -
+					 radio_tx_chain_delay_get(
+						 _radio.conn_curr->phy_tx,
+						 _radio.conn_curr->phy_flags) -
+					 CONFIG_BT_CTLR_GPIO_LNA_OFFSET);
+#else /* !CONFIG_BT_CTLR_PHY */
+		radio_gpio_pa_lna_enable(radio_tmr_end_get() + RADIO_TIFS - 4 -
+					 radio_tx_chain_delay_get(0, 0) -
+					 CONFIG_BT_CTLR_GPIO_LNA_OFFSET);
+#endif /* !CONFIG_BT_CTLR_PHY */
+#endif /* CONFIG_BT_CTLR_GPIO_LNA_PIN */
+
+#if defined(CONFIG_BT_CTLR_PROFILE_ISR) || \
+    defined(CONFIG_BT_CTLR_GPIO_PA_PIN)
 		radio_tmr_end_capture();
+#endif /* CONFIG_BT_CTLR_PROFILE_ISR */
 
 		/* Route the tx packet to respective connections */
 		/* TODO: use timebox for tx enqueue (instead of 1 packet
@@ -866,6 +912,16 @@ static inline u32_t isr_rx_adv(u8_t devmatch_ok, u8_t devmatch_id,
 
 		radio_pkt_tx_set(&_radio.advertiser.scan_data.
 		     data[_radio.advertiser.scan_data.first][0]);
+
+#if defined(CONFIG_BT_CTLR_GPIO_PA_PIN)
+		radio_gpio_pa_setup();
+		radio_gpio_pa_lna_enable(radio_tmr_end_get() + RADIO_TIFS -
+					 radio_rx_chain_delay_get(0, 0) -
+					 CONFIG_BT_CTLR_GPIO_PA_OFFSET);
+#endif /* CONFIG_BT_CTLR_GPIO_PA_PIN */
+
+		/* assert if radio packet ptr is not set and radio started tx */
+		LL_ASSERT(!radio_is_ready());
 
 		return 0;
 	} else if ((pdu_adv->type == PDU_ADV_TYPE_CONNECT_IND) &&
@@ -1270,7 +1326,7 @@ static inline u32_t isr_rx_scan(u8_t devmatch_ok, u8_t devmatch_id,
 	if ((_radio.scanner.conn) && ((_radio.fc_ena == 0) ||
 				      (_radio.fc_req == _radio.fc_ack)) &&
 	    isr_scan_init_check(pdu_adv_rx, rl_idx) &&
-	    ((radio_tmr_end_get() + 502) <
+	    ((radio_tmr_end_get() + 502 + (RADIO_TICKER_JITTER_US << 1)) <
 	     (TICKER_TICKS_TO_US(_radio.scanner.hdr.ticks_slot) -
 	      RADIO_TICKER_START_PART_US))) {
 		struct radio_le_conn_cmplt *radio_le_conn_cmplt;
@@ -1394,10 +1450,15 @@ static inline u32_t isr_rx_scan(u8_t devmatch_ok, u8_t devmatch_id,
 
 		radio_pkt_tx_set(pdu_adv_tx);
 
+#if defined(CONFIG_BT_CTLR_GPIO_PA_PIN)
+		radio_gpio_pa_setup();
+		radio_gpio_pa_lna_enable(radio_tmr_end_get() + RADIO_TIFS -
+					 radio_rx_chain_delay_get(0, 0) -
+					 CONFIG_BT_CTLR_GPIO_PA_OFFSET);
+#endif /* CONFIG_BT_CTLR_GPIO_PA_PIN */
+
 		/* assert if radio packet ptr is not set and radio started tx */
 		LL_ASSERT(!radio_is_ready());
-
-		radio_tmr_end_capture();
 
 		/* block CPU so that there is no CRC error on pdu tx,
 		 * this is only needed if we want the CPU to sleep.
@@ -1596,7 +1657,19 @@ static inline u32_t isr_rx_scan(u8_t devmatch_ok, u8_t devmatch_id,
 		radio_tmr_tifs_set(RADIO_TIFS);
 		radio_switch_complete_and_rx(0);
 		radio_pkt_tx_set(pdu_adv_tx);
+
+		/* capture end of Tx-ed PDU, used to calculate HCTO. */
 		radio_tmr_end_capture();
+
+#if defined(CONFIG_BT_CTLR_GPIO_PA_PIN)
+		radio_gpio_pa_setup();
+		radio_gpio_pa_lna_enable(radio_tmr_end_get() + RADIO_TIFS -
+					 radio_rx_chain_delay_get(0, 0) -
+					 CONFIG_BT_CTLR_GPIO_PA_OFFSET);
+#endif /* CONFIG_BT_CTLR_GPIO_PA_PIN */
+
+		/* assert if radio packet ptr is not set and radio started tx */
+		LL_ASSERT(!radio_is_ready());
 
 		return 0;
 	}
@@ -1797,15 +1870,12 @@ isr_rx_conn_pkt_release(struct radio_pdu_node_tx *node_tx)
 	/* release */
 	if (conn->pkt_tx_head == conn->pkt_tx_ctrl) {
 		if (node_tx) {
+			conn->pkt_tx_head = conn->pkt_tx_head->next;
 			if (conn->pkt_tx_ctrl == conn->pkt_tx_ctrl_last) {
-				conn->pkt_tx_ctrl_last =
-					conn->pkt_tx_ctrl_last->next;
-			}
-			conn->pkt_tx_ctrl = conn->pkt_tx_ctrl->next;
-			conn->pkt_tx_head = conn->pkt_tx_ctrl;
-			if (conn->pkt_tx_ctrl == conn->pkt_tx_data) {
 				conn->pkt_tx_ctrl = NULL;
 				conn->pkt_tx_ctrl_last = NULL;
+			} else {
+				conn->pkt_tx_ctrl = conn->pkt_tx_head;
 			}
 
 			mem_release(node_tx, &_radio. pkt_tx_ctrl_free);
@@ -1853,7 +1923,7 @@ isr_rx_conn_pkt_ctrl_rej_conn_upd(struct radio_pdu_node_rx *radio_pdu_node_rx,
 	conn = _radio.conn_curr;
 
 	/* Unsupported remote feature */
-	if (rej_ext_ind->error_code == 0x1a) {
+	if (!conn->role && (rej_ext_ind->error_code == 0x1a)) {
 		LL_ASSERT(conn->llcp_req == conn->llcp_ack);
 
 		conn->llcp_conn_param.state = LLCP_CPR_STATE_UPD;
@@ -1864,7 +1934,7 @@ isr_rx_conn_pkt_ctrl_rej_conn_upd(struct radio_pdu_node_rx *radio_pdu_node_rx,
 		conn->llcp.conn_upd.latency = conn->llcp_conn_param.latency;
 		conn->llcp.conn_upd.timeout = conn->llcp_conn_param.timeout;
 		/* conn->llcp.conn_upd.instant     = 0; */
-		conn->llcp.conn_upd.state = LLCP_CUI_STATE_SELECT;
+		conn->llcp.conn_upd.state = LLCP_CUI_STATE_USE;
 		conn->llcp.conn_upd.is_internal = !conn->llcp_conn_param.cmd;
 		conn->llcp_type = LLCP_CONN_UPD;
 		conn->llcp_ack--;
@@ -2754,6 +2824,9 @@ isr_rx_conn_pkt_ctrl(struct radio_pdu_node_rx *radio_pdu_node_rx,
 				break;
 			}
 
+			/* Stop procedure timeout */
+			_radio.conn_curr->procedure_expire = 0;
+
 			/* save parameters to be used to select offset
 			 */
 			conn->llcp_conn_param.interval = cpr->interval_min;
@@ -2792,16 +2865,7 @@ isr_rx_conn_pkt_ctrl(struct radio_pdu_node_rx *radio_pdu_node_rx,
 #endif /* CONFIG_BT_CTLR_LE_PING */
 
 	case PDU_DATA_LLCTRL_TYPE_UNKNOWN_RSP:
-		if (_radio.conn_curr->llcp_req != _radio.conn_curr->llcp_ack) {
-			/* reset ctrl procedure */
-			_radio.conn_curr->llcp_ack = _radio.conn_curr->llcp_req;
-
-			switch (_radio.conn_curr->llcp_type) {
-			default:
-				LL_ASSERT(0);
-				break;
-			}
-
+		if (0) {
 #if defined(CONFIG_BT_CTLR_DATA_LENGTH)
 		} else if (_radio.conn_curr->llcp_length.req !=
 			   _radio.conn_curr->llcp_length.ack) {
@@ -2936,11 +3000,22 @@ isr_rx_conn_pkt_ctrl(struct radio_pdu_node_rx *radio_pdu_node_rx,
 		} else {
 			phy_rsp_send(_radio.conn_curr);
 
-			/* Start Procedure Timeout (TODO: this shall not replace
-			 * terminate procedure).
-			 */
-			_radio.conn_curr->procedure_expire =
-				_radio.conn_curr->procedure_reload;
+			/* Wait for peer master to complete the procedure */
+			if (_radio.conn_curr->llcp_phy.ack ==
+			    _radio.conn_curr->llcp_phy.req) {
+				_radio.conn_curr->llcp_phy.ack--;
+
+				_radio.conn_curr->llcp_phy.state =
+					LLCP_PHY_STATE_RSP_WAIT;
+
+				_radio.conn_curr->llcp_phy.cmd = 0;
+
+				/* Start Procedure Timeout (TODO: this shall not
+				 * replace terminate procedure).
+				 */
+				_radio.conn_curr->procedure_expire =
+					_radio.conn_curr->procedure_reload;
+			}
 		}
 		break;
 
@@ -3071,7 +3146,7 @@ isr_rx_conn_pkt(struct radio_pdu_node_rx *radio_pdu_node_rx,
 
 		if (_radio.conn_curr->empty == 0) {
 			struct radio_pdu_node_tx *node_tx;
-			u8_t pdu_data_tx_len, pdu_data_tx_ll_id;
+			u8_t pdu_data_tx_len;
 
 			node_tx = _radio.conn_curr->pkt_tx_head;
 			pdu_data_tx = (struct pdu_data *)
@@ -3079,8 +3154,6 @@ isr_rx_conn_pkt(struct radio_pdu_node_rx *radio_pdu_node_rx,
 				 _radio.conn_curr->packet_tx_head_offset);
 
 			pdu_data_tx_len = pdu_data_tx->len;
-			pdu_data_tx_ll_id = pdu_data_tx->ll_id;
-
 			if (pdu_data_tx_len != 0) {
 				/* if encrypted increment tx counter */
 				if (_radio.conn_curr->enc_tx) {
@@ -3088,7 +3161,7 @@ isr_rx_conn_pkt(struct radio_pdu_node_rx *radio_pdu_node_rx,
 				}
 
 				/* process ctrl packet on tx cmplt */
-				if (pdu_data_tx_ll_id == PDU_DATA_LLID_CTRL) {
+				if (pdu_data_tx->ll_id == PDU_DATA_LLID_CTRL) {
 					terminate =
 						isr_rx_conn_pkt_ack(pdu_data_tx,
 								    &node_tx);
@@ -3239,39 +3312,18 @@ static inline void isr_rx_conn(u8_t crc_ok, u8_t trx_done,
 	u8_t crc_close = 0;
 
 #if defined(CONFIG_BT_CTLR_PROFILE_ISR)
-	static u8_t s_lmax;
 	static u8_t s_lmin = (u8_t) -1;
+	static u8_t s_min = (u8_t) -1;
+	static u8_t s_lmax;
 	static u8_t s_lprv;
 	static u8_t s_max;
-	static u8_t s_min = (u8_t) -1;
 	static u8_t s_prv;
-	u32_t sample;
+
 	u8_t latency, elapsed, prv;
+	u32_t radio_tmr_end = 0;
+	u32_t sample;
 	u8_t chg = 0;
 #endif /* CONFIG_BT_CTLR_PROFILE_ISR */
-
-#if defined(CONFIG_BT_CTLR_CONN_RSSI)
-	/* Collect RSSI for connection */
-	if (_radio.packet_counter == 0) {
-		if (rssi_ready) {
-			u8_t rssi = radio_rssi_get();
-
-			_radio.conn_curr->rssi_latest = rssi;
-
-			if (((_radio.conn_curr->rssi_reported - rssi) & 0xFF) >
-			    RADIO_RSSI_THRESHOLD) {
-				if (_radio.conn_curr->rssi_sample_count) {
-					_radio.conn_curr->rssi_sample_count--;
-				}
-			} else {
-				_radio.conn_curr->rssi_sample_count =
-					RADIO_RSSI_SAMPLE_COUNT;
-			}
-		}
-	}
-#else /* !CONFIG_BT_CTLR_CONN_RSSI */
-	ARG_UNUSED(rssi_ready);
-#endif /* !CONFIG_BT_CTLR_CONN_RSSI */
 
 	/* Increment packet counter for this connection event */
 	_radio.packet_counter++;
@@ -3374,6 +3426,7 @@ static inline void isr_rx_conn(u8_t crc_ok, u8_t trx_done,
 		radio_switch_complete_and_rx(0);
 #endif /* !CONFIG_BT_CTLR_PHY */
 
+		/* capture end of Tx-ed PDU, used to calculate HCTO. */
 		radio_tmr_end_capture();
 	}
 
@@ -3384,7 +3437,39 @@ static inline void isr_rx_conn(u8_t crc_ok, u8_t trx_done,
 	/* setup the radio tx packet buffer */
 	tx_packet_set(_radio.conn_curr, pdu_data_tx);
 
+#if defined(CONFIG_BT_CTLR_GPIO_PA_PIN)
+
+#if defined(CONFIG_BT_CTLR_PROFILE_ISR)
+	/* PA enable is overwriting packet end used in ISR profiling, hence
+	 * back it up for later use.
+	 */
+	radio_tmr_end = radio_tmr_end_get();
+#endif /* CONFIG_BT_CTLR_PROFILE_ISR */
+
+	radio_gpio_pa_setup();
+
+#if defined(CONFIG_BT_CTLR_PHY)
+	radio_gpio_pa_lna_enable(radio_tmr_end_get() + RADIO_TIFS -
+				 radio_rx_chain_delay_get(
+					 _radio.conn_curr->phy_rx,
+					 _radio.conn_curr->phy_flags) -
+				 CONFIG_BT_CTLR_GPIO_PA_OFFSET);
+#else /* !CONFIG_BT_CTLR_PHY */
+	radio_gpio_pa_lna_enable(radio_tmr_end_get() + RADIO_TIFS -
+				 radio_rx_chain_delay_get(0, 0) -
+				 CONFIG_BT_CTLR_GPIO_PA_OFFSET);
+#endif /* !CONFIG_BT_CTLR_PHY */
+#endif /* CONFIG_BT_CTLR_GPIO_PA_PIN */
+
+	/* assert if radio packet ptr is not set and radio started tx */
+	LL_ASSERT(!radio_is_ready());
+
 isr_rx_conn_exit:
+
+	/* Save the AA captured for the first Rx in connection event */
+	if (!radio_tmr_aa_restore()) {
+		radio_tmr_aa_save(radio_tmr_aa_get());
+	}
 
 #if defined(CONFIG_BT_CTLR_PROFILE_ISR)
 	/* get the ISR latency sample */
@@ -3396,6 +3481,13 @@ isr_rx_conn_exit:
 	radio_tmr_sample();
 
 #endif /* CONFIG_BT_CTLR_PROFILE_ISR */
+
+	/* NOTE: Check for connection termination and skip accessing connection
+	 * context.
+	 */
+	if (!_radio.conn_curr) {
+		goto isr_rx_conn_terminate_exit;
+	}
 
 	/* release tx node and generate event for num complete */
 	if (tx_release) {
@@ -3412,11 +3504,40 @@ isr_rx_conn_exit:
 		packet_rx_enqueue();
 	}
 
+#if defined(CONFIG_BT_CTLR_CONN_RSSI)
+	/* Collect RSSI for connection */
+	if (rssi_ready) {
+		u8_t rssi = radio_rssi_get();
+
+		_radio.conn_curr->rssi_latest = rssi;
+
+		if (((_radio.conn_curr->rssi_reported - rssi) & 0xFF) >
+		    RADIO_RSSI_THRESHOLD) {
+			if (_radio.conn_curr->rssi_sample_count) {
+				_radio.conn_curr->rssi_sample_count--;
+			}
+		} else {
+			_radio.conn_curr->rssi_sample_count =
+				RADIO_RSSI_SAMPLE_COUNT;
+		}
+	}
+#else /* !CONFIG_BT_CTLR_CONN_RSSI */
+	ARG_UNUSED(rssi_ready);
+#endif /* !CONFIG_BT_CTLR_CONN_RSSI */
+
+isr_rx_conn_terminate_exit:
+
 #if defined(CONFIG_BT_CTLR_PROFILE_ISR)
 	/* calculate the elapsed time in us since on-air radio packet end
 	 * to ISR entry
 	 */
+#if defined(CONFIG_BT_CTLR_GPIO_PA_PIN)
+	latency = sample - radio_tmr_end;
+#else /* !CONFIG_BT_CTLR_GPIO_PA_PIN */
+	ARG_UNUSED(radio_tmr_end);
+
 	latency = sample - radio_tmr_end_get();
+#endif /* !CONFIG_BT_CTLR_GPIO_PA_PIN */
 
 	/* check changes in min, avg and max of latency */
 	if (latency > s_lmax) {
@@ -3552,12 +3673,26 @@ static inline u32_t isr_close_adv(void)
 
 	if ((_radio.state == STATE_CLOSE) &&
 	    (_radio.advertiser.chan_map_current != 0)) {
+		u32_t start_us;
+
 		dont_close = 1;
 
 		adv_setup();
 
-		radio_tx_enable();
+#if defined(CONFIG_BT_CTLR_GPIO_PA_PIN)
+		start_us = radio_tmr_start_now(1);
 
+		radio_gpio_pa_setup();
+		radio_gpio_pa_lna_enable(start_us +
+					 radio_tx_ready_delay_get(0, 0) -
+					 CONFIG_BT_CTLR_GPIO_PA_OFFSET);
+#else /* !CONFIG_BT_CTLR_GPIO_PA_PIN */
+		ARG_UNUSED(start_us);
+
+		radio_tx_enable();
+#endif /* !CONFIG_BT_CTLR_GPIO_PA_PIN */
+
+		/* capture end of Tx-ed PDU, used to calculate HCTO. */
 		radio_tmr_end_capture();
 	} else {
 		struct pdu_adv *pdu_adv;
@@ -3605,6 +3740,8 @@ static inline u32_t isr_close_scan(void)
 	u32_t dont_close = 0;
 
 	if (_radio.state == STATE_CLOSE) {
+		u32_t start_us;
+
 		dont_close = 1;
 
 		radio_tmr_tifs_set(RADIO_TIFS);
@@ -3621,8 +3758,22 @@ static inline u32_t isr_close_scan(void)
 #endif /* CONFIG_BT_CTLR_PRIVACY */
 		_radio.state = STATE_RX;
 
-		radio_rx_enable();
+#if defined(CONFIG_BT_CTLR_GPIO_LNA_PIN)
+		start_us = radio_tmr_start_now(0);
 
+		radio_gpio_lna_setup();
+		radio_gpio_pa_lna_enable(start_us +
+					 radio_rx_ready_delay_get(0) -
+					 CONFIG_BT_CTLR_GPIO_LNA_OFFSET);
+#else /* !CONFIG_BT_CTLR_GPIO_LNA_PIN */
+		ARG_UNUSED(start_us);
+
+		radio_rx_enable();
+#endif /* !CONFIG_BT_CTLR_GPIO_LNA_PIN */
+
+		/* capture end of Rx-ed PDU, for initiator to calculate first
+		 * master event.
+		 */
 		radio_tmr_end_capture();
 	} else {
 		radio_filter_disable();
@@ -3685,7 +3836,8 @@ static inline void isr_close_conn(void)
 			u32_t preamble_to_addr_us;
 
 			/* calculate the drift in ticks */
-			start_to_address_actual_us = radio_tmr_aa_get();
+			start_to_address_actual_us = radio_tmr_aa_restore() -
+						     radio_tmr_ready_get();
 			window_widening_event_us =
 				_radio.conn_curr->slave.window_widening_event_us;
 #if defined(CONFIG_BT_CTLR_PHY)
@@ -4044,6 +4196,11 @@ static void isr(void)
 	radio_filter_status_reset();
 	radio_ar_status_reset();
 	radio_rssi_status_reset();
+
+#if defined(CONFIG_BT_CTLR_GPIO_PA_PIN) || \
+    defined(CONFIG_BT_CTLR_GPIO_LNA_PIN)
+	radio_gpio_pa_lna_disable();
+#endif /* CONFIG_BT_CTLR_GPIO_PA_PIN || CONFIG_BT_CTLR_GPIO_LNA_PIN */
 
 	switch (_radio.state) {
 	case STATE_TX:
@@ -5613,7 +5770,9 @@ static void adv_setup(void)
 #else
 	ARG_UNUSED(upd);
 #endif /* !CONFIG_BT_CTLR_PRIVACY */
+
 	radio_pkt_tx_set(pdu);
+
 	if ((pdu->type != PDU_ADV_TYPE_NONCONN_IND) &&
 	    (!IS_ENABLED(CONFIG_BT_CTLR_ADV_EXT) ||
 	     (pdu->type != PDU_ADV_TYPE_EXT_IND))) {
@@ -5640,6 +5799,8 @@ static void adv_setup(void)
 static void event_adv(u32_t ticks_at_expire, u32_t remainder,
 		      u16_t lazy, void *context)
 {
+	u32_t remainder_us;
+
 	ARG_UNUSED(remainder);
 	ARG_UNUSED(lazy);
 	ARG_UNUSED(context);
@@ -5689,11 +5850,22 @@ static void event_adv(u32_t ticks_at_expire, u32_t remainder,
 				       (u8_t *)wl->bdaddr);
 	}
 
-	radio_tmr_start(1,
-			ticks_at_expire +
-			TICKER_US_TO_TICKS(RADIO_TICKER_START_PART_US),
-			_radio.remainder_anchor);
+	remainder_us = radio_tmr_start(1,
+				ticks_at_expire +
+				TICKER_US_TO_TICKS(RADIO_TICKER_START_PART_US),
+				_radio.remainder_anchor);
+
+	/* capture end of Tx-ed PDU, used to calculate HCTO. */
 	radio_tmr_end_capture();
+
+#if defined(CONFIG_BT_CTLR_GPIO_PA_PIN)
+	radio_gpio_pa_setup();
+	radio_gpio_pa_lna_enable(remainder_us +
+				 radio_tx_ready_delay_get(0, 0) -
+				 CONFIG_BT_CTLR_GPIO_PA_OFFSET);
+#else /* !CONFIG_BT_CTLR_GPIO_PA_PIN */
+	ARG_UNUSED(remainder_us);
+#endif /* !CONFIG_BT_CTLR_GPIO_PA_PIN */
 
 #if (defined(CONFIG_BT_CTLR_XTAL_ADVANCED) && \
      (RADIO_TICKER_PREEMPT_PART_US <= RADIO_TICKER_PREEMPT_PART_MIN_US))
@@ -5722,31 +5894,11 @@ static void event_adv(u32_t ticks_at_expire, u32_t remainder,
 	DEBUG_RADIO_START_A(0);
 }
 
-void event_adv_stop(u32_t ticks_at_expire, u32_t remainder, u16_t lazy,
-		    void *context)
+static void mayfly_adv_stop(void *param)
 {
 	struct radio_le_conn_cmplt *radio_le_conn_cmplt;
 	struct radio_pdu_node_rx *radio_pdu_node_rx;
 	struct pdu_data *pdu_data_rx;
-	u32_t ticker_status;
-
-	ARG_UNUSED(ticks_at_expire);
-	ARG_UNUSED(remainder);
-	ARG_UNUSED(lazy);
-	ARG_UNUSED(context);
-
-	/* Abort an event, if any, to avoid Rx queue corruption used by Radio
-	 * ISR.
-	 */
-	event_stop(0, 0, 0, (void *)STATE_ABORT);
-
-	/* Stop Direct Adv */
-	ticker_status =
-	    ticker_stop(RADIO_TICKER_INSTANCE_ID_RADIO,
-			RADIO_TICKER_USER_ID_WORKER, RADIO_TICKER_ID_ADV,
-			ticker_success_assert, (void *)__LINE__);
-	LL_ASSERT((ticker_status == TICKER_STATUS_SUCCESS) ||
-		  (ticker_status == TICKER_STATUS_BUSY));
 
 	/* Prepare the rx packet structure */
 	radio_pdu_node_rx = packet_rx_reserve_get(1);
@@ -5765,6 +5917,186 @@ void event_adv_stop(u32_t ticks_at_expire, u32_t remainder, u16_t lazy,
 
 	/* enqueue connection complete structure into queue */
 	packet_rx_enqueue();
+}
+
+static inline void ticker_stop_adv_stop_active(void)
+{
+	static void *s_link[2];
+	static struct mayfly s_mfy_radio_inactive = {0, 0, s_link, NULL,
+		mayfly_radio_inactive};
+	u32_t volatile ret_cb = TICKER_STATUS_BUSY;
+	u32_t ret;
+
+	/* Step 2: Is caller before Event? Stop Event */
+	ret = ticker_stop(RADIO_TICKER_INSTANCE_ID_RADIO,
+			  RADIO_TICKER_USER_ID_JOB, RADIO_TICKER_ID_EVENT,
+			  ticker_if_done, (void *)&ret_cb);
+
+	if (ret == TICKER_STATUS_BUSY) {
+		mayfly_enable(RADIO_TICKER_USER_ID_JOB,
+			      RADIO_TICKER_USER_ID_JOB, 1);
+
+		while (ret_cb == TICKER_STATUS_BUSY) {
+			ticker_job_sched(RADIO_TICKER_INSTANCE_ID_RADIO,
+					 RADIO_TICKER_USER_ID_JOB);
+		}
+	}
+
+	if (ret_cb == TICKER_STATUS_SUCCESS) {
+		static void *s_link[2];
+		static struct mayfly s_mfy_xtal_stop = {0, 0, s_link, NULL,
+			mayfly_xtal_stop};
+		u32_t volatile ret_cb = TICKER_STATUS_BUSY;
+		u32_t ret;
+
+		/* Reset the stored ticker id in prepare phase. */
+		LL_ASSERT(_radio.ticker_id_prepare);
+		_radio.ticker_id_prepare = 0;
+
+		/* Step 2.1: Is caller between Primary and Marker0?
+		 * Stop the Marker0 event
+		 */
+		ret = ticker_stop(RADIO_TICKER_INSTANCE_ID_RADIO,
+				  RADIO_TICKER_USER_ID_JOB,
+				  RADIO_TICKER_ID_MARKER_0,
+				  ticker_if_done, (void *)&ret_cb);
+
+		if (ret == TICKER_STATUS_BUSY) {
+			mayfly_enable(RADIO_TICKER_USER_ID_JOB,
+				      RADIO_TICKER_USER_ID_JOB, 1);
+
+			while (ret_cb == TICKER_STATUS_BUSY) {
+				ticker_job_sched(RADIO_TICKER_INSTANCE_ID_RADIO,
+						 RADIO_TICKER_USER_ID_JOB);
+			}
+		}
+
+		if (ret_cb == TICKER_STATUS_SUCCESS) {
+			/* Step 2.1.1: Check and deassert Radio Active or XTAL
+			 * start
+			 */
+			if (_radio.advertiser.hdr.ticks_active_to_start >
+			    (_radio.advertiser.hdr.ticks_xtal_to_start &
+			     ~BIT(31))) {
+				u32_t retval;
+
+				/* radio active asserted, handle deasserting
+				 * here
+				 */
+				retval = mayfly_enqueue(
+						RADIO_TICKER_USER_ID_JOB,
+						RADIO_TICKER_USER_ID_WORKER, 0,
+						&s_mfy_radio_inactive);
+				LL_ASSERT(!retval);
+			} else {
+				u32_t retval;
+
+				/* XTAL started, handle XTAL stop here */
+				retval = mayfly_enqueue(
+						RADIO_TICKER_USER_ID_JOB,
+						RADIO_TICKER_USER_ID_WORKER, 0,
+						&s_mfy_xtal_stop);
+				LL_ASSERT(!retval);
+			}
+		} else if (ret_cb == TICKER_STATUS_FAILURE) {
+			u32_t retval;
+
+			/* Step 2.1.2: Deassert Radio Active and XTAL start */
+
+			/* radio active asserted, handle deasserting here */
+			retval = mayfly_enqueue(RADIO_TICKER_USER_ID_JOB,
+						RADIO_TICKER_USER_ID_WORKER, 0,
+						&s_mfy_radio_inactive);
+			LL_ASSERT(!retval);
+
+			/* XTAL started, handle XTAL stop here */
+			retval = mayfly_enqueue(RADIO_TICKER_USER_ID_JOB,
+						RADIO_TICKER_USER_ID_WORKER, 0,
+						&s_mfy_xtal_stop);
+			LL_ASSERT(!retval);
+		} else {
+			LL_ASSERT(0);
+		}
+	} else if (ret_cb == TICKER_STATUS_FAILURE) {
+		/* Step 3: Caller inside Event, handle graceful stop of Event
+		 * (role dependent)
+		 */
+		if (_radio.role != ROLE_NONE) {
+			static void *s_link[2];
+			static struct mayfly s_mfy_radio_stop = {0, 0, s_link,
+				NULL, mayfly_radio_stop};
+			u32_t retval;
+
+			/* Radio state STOP is supplied in params */
+			s_mfy_radio_stop.param = (void *)STATE_STOP;
+
+			/* Stop Radio Tx/Rx */
+			retval = mayfly_enqueue(RADIO_TICKER_USER_ID_JOB,
+						RADIO_TICKER_USER_ID_WORKER, 0,
+						&s_mfy_radio_stop);
+			LL_ASSERT(!retval);
+
+			/* NOTE: Cannot wait here for the event to finish
+			 * as we need to let radio ISR to execute if we are in
+			 * the same priority.
+			 */
+		}
+	} else {
+		LL_ASSERT(0);
+	}
+}
+
+static void ticker_stop_adv_stop(u32_t status, void *params)
+{
+	static void *s_link[2];
+	static struct mayfly s_mfy_adv_stop = {0, 0, s_link, NULL,
+					       mayfly_adv_stop};
+	u32_t retval;
+
+	ARG_UNUSED(params);
+
+	/* Ignore if being stopped from app/thread prio */
+	if (status != TICKER_STATUS_SUCCESS) {
+		LL_ASSERT(_radio.ticker_id_stop == RADIO_TICKER_ID_ADV);
+
+		return;
+	}
+
+	/* Handle adv stop inside a prepare and/or event */
+	if ((_radio.ticker_id_prepare == RADIO_TICKER_ID_ADV) ||
+	    (_radio.ticker_id_event == RADIO_TICKER_ID_ADV)) {
+		ticker_stop_adv_stop_active();
+	}
+
+	/* Generate the connection complete event in WORKER Prio */
+	retval = mayfly_enqueue(RADIO_TICKER_USER_ID_JOB,
+				RADIO_TICKER_USER_ID_WORKER, 0,
+				&s_mfy_adv_stop);
+	LL_ASSERT(!retval);
+}
+
+void event_adv_stop(u32_t ticks_at_expire, u32_t remainder, u16_t lazy,
+		    void *context)
+{
+	u32_t ticker_status;
+
+	ARG_UNUSED(ticks_at_expire);
+	ARG_UNUSED(remainder);
+	ARG_UNUSED(lazy);
+	ARG_UNUSED(context);
+
+	/* Abort an event, if any, to avoid Rx queue corruption used by Radio
+	 * ISR.
+	 */
+	event_stop(0, 0, 0, (void *)STATE_ABORT);
+
+	/* Stop Direct Adv */
+	ticker_status =
+	    ticker_stop(RADIO_TICKER_INSTANCE_ID_RADIO,
+			RADIO_TICKER_USER_ID_WORKER, RADIO_TICKER_ID_ADV,
+			ticker_stop_adv_stop, (void *)__LINE__);
+	LL_ASSERT((ticker_status == TICKER_STATUS_SUCCESS) ||
+		  (ticker_status == TICKER_STATUS_BUSY));
 }
 
 static void event_scan_prepare(u32_t ticks_at_expire, u32_t remainder,
@@ -5826,6 +6158,7 @@ static void event_scan(u32_t ticks_at_expire, u32_t remainder, u16_t lazy,
 		      void *context)
 {
 	u32_t ticker_status;
+	u32_t remainder_us;
 
 	ARG_UNUSED(remainder);
 	ARG_UNUSED(lazy);
@@ -5885,11 +6218,24 @@ static void event_scan(u32_t ticks_at_expire, u32_t remainder, u16_t lazy,
 				       (u8_t *)wl->bdaddr);
 	}
 
-	radio_tmr_start(0,
-			ticks_at_expire +
-			TICKER_US_TO_TICKS(RADIO_TICKER_START_PART_US),
-			_radio.remainder_anchor);
+	remainder_us = radio_tmr_start(0,
+				ticks_at_expire +
+				TICKER_US_TO_TICKS(RADIO_TICKER_START_PART_US),
+				_radio.remainder_anchor);
+
+	/* capture end of Rx-ed PDU, for initiator to calculate first
+	 * master event.
+	 */
 	radio_tmr_end_capture();
+
+#if defined(CONFIG_BT_CTLR_GPIO_LNA_PIN)
+	radio_gpio_lna_setup();
+	radio_gpio_pa_lna_enable(remainder_us +
+				 radio_rx_ready_delay_get(0) -
+				 CONFIG_BT_CTLR_GPIO_LNA_OFFSET);
+#else /* !CONFIG_BT_CTLR_GPIO_LNA_PIN */
+	ARG_UNUSED(remainder_us);
+#endif /* !CONFIG_BT_CTLR_GPIO_LNA_PIN */
 
 #if (defined(CONFIG_BT_CTLR_XTAL_ADVANCED) && \
      (RADIO_TICKER_PREEMPT_PART_US <= RADIO_TICKER_PREEMPT_PART_MIN_US))
@@ -6089,6 +6435,9 @@ static inline u32_t event_conn_upd_prep(struct connection *conn,
 		if ((conn->llcp_conn_param.req != conn->llcp_conn_param.ack) &&
 		    (conn->llcp_conn_param.state == LLCP_CPR_STATE_UPD)) {
 			conn->llcp_conn_param.ack = conn->llcp_conn_param.req;
+
+			/* Stop procedure timeout */
+			conn->procedure_expire = 0;
 		}
 #endif /* CONFIG_BT_CTLR_CONN_PARAM_REQ */
 		/* Reset ticker_id_prepare as role is not continued further
@@ -6214,7 +6563,7 @@ static inline u32_t event_conn_upd_prep(struct connection *conn,
 			 * ticker_start function for first interval; add a
 			 * tick so as to use the ceiled value.
 			 */
-			ticks_win_offset += TICKER_TICKS_TO_US(1);
+			ticks_win_offset += 1;
 		}
 		conn->conn_interval = conn->llcp.conn_upd.interval;
 		conn->latency = conn->llcp.conn_upd.latency;
@@ -7638,7 +7987,10 @@ static void event_slave(u32_t ticks_at_expire, u32_t remainder, u16_t lazy,
 		radio_tmr_start(0, ticks_at_expire +
 				TICKER_US_TO_TICKS(RADIO_TICKER_START_PART_US),
 				_radio.remainder_anchor);
+
 	radio_tmr_aa_capture();
+	radio_tmr_aa_save(0);
+
 	hcto = remainder_us + RADIO_TICKER_JITTER_US +
 	       (RADIO_TICKER_JITTER_US << 2) +
 	       (conn->slave.window_widening_event_us << 1) +
@@ -7653,7 +8005,25 @@ static void event_slave(u32_t ticks_at_expire, u32_t remainder, u16_t lazy,
 #endif /* !CONFIG_BT_CTLR_PHY */
 
 	radio_tmr_hcto_configure(hcto);
+
+#if defined(CONFIG_BT_CTLR_GPIO_LNA_PIN)
+	radio_gpio_lna_setup();
+
+#if defined(CONFIG_BT_CTLR_PHY)
+	radio_gpio_pa_lna_enable(remainder_us +
+				 radio_rx_ready_delay_get(conn->phy_rx) -
+				 CONFIG_BT_CTLR_GPIO_LNA_OFFSET);
+#else /* !CONFIG_BT_CTLR_PHY */
+	radio_gpio_pa_lna_enable(remainder_us +
+				 radio_rx_ready_delay_get(0) -
+				 CONFIG_BT_CTLR_GPIO_LNA_OFFSET);
+#endif /* !CONFIG_BT_CTLR_PHY */
+#endif /* CONFIG_BT_CTLR_GPIO_LNA_PIN */
+
+#if defined(CONFIG_BT_CTLR_PROFILE_ISR) || \
+    defined(CONFIG_BT_CTLR_GPIO_PA_PIN)
 	radio_tmr_end_capture();
+#endif /* CONFIG_BT_CTLR_PROFILE_ISR */
 
 #if defined(CONFIG_BT_CTLR_CONN_RSSI)
 	radio_rssi_measure();
@@ -7702,9 +8072,10 @@ static void event_master_prepare(u32_t ticks_at_expire, u32_t remainder,
 static void event_master(u32_t ticks_at_expire, u32_t remainder, u16_t lazy,
 			 void *context)
 {
-	u8_t data_chan_use = 0;
 	struct pdu_data *pdu_data_tx;
 	struct connection *conn;
+	u8_t data_chan_use = 0;
+	u32_t remainder_us;
 
 	ARG_UNUSED(remainder);
 	ARG_UNUSED(lazy);
@@ -7777,10 +8148,31 @@ static void event_master(u32_t ticks_at_expire, u32_t remainder, u16_t lazy,
 	    (conn->supervision_expire && (conn->supervision_expire <= 6)) ||
 	    (conn->connect_expire && (conn->connect_expire <= 6))) {
 #endif
-		radio_tmr_start(1, ticks_at_expire +
+		remainder_us = radio_tmr_start(1,
+				ticks_at_expire +
 				TICKER_US_TO_TICKS(RADIO_TICKER_START_PART_US),
 				_radio.remainder_anchor);
+
+		/* capture end of Tx-ed PDU, used to calculate HCTO. */
 		radio_tmr_end_capture();
+
+#if defined(CONFIG_BT_CTLR_GPIO_PA_PIN)
+		radio_gpio_pa_setup();
+
+#if defined(CONFIG_BT_CTLR_PHY)
+		radio_gpio_pa_lna_enable(remainder_us +
+			radio_tx_ready_delay_get(conn->phy_tx,
+						 conn->phy_flags) -
+			CONFIG_BT_CTLR_GPIO_PA_OFFSET);
+#else /* !CONFIG_BT_CTLR_PHY */
+		radio_gpio_pa_lna_enable(remainder_us +
+					 radio_tx_ready_delay_get(0, 0) -
+					 CONFIG_BT_CTLR_GPIO_PA_OFFSET);
+#endif /* !CONFIG_BT_CTLR_PHY */
+#else /* !CONFIG_BT_CTLR_GPIO_PA_PIN */
+		ARG_UNUSED(remainder_us);
+#endif /* !CONFIG_BT_CTLR_GPIO_PA_PIN */
+
 #if SILENT_CONNECTION
 	/* silent connection! */
 	} else {
@@ -7808,7 +8200,9 @@ static void event_master(u32_t ticks_at_expire, u32_t remainder, u16_t lazy,
 			radio_tmr_start(0, ticks_at_expire +
 					TICKER_US_TO_TICKS(RADIO_TICKER_START_PART_US),
 					_radio.remainder_anchor);
+
 		radio_tmr_aa_capture();
+		radio_tmr_aa_save(0);
 
 		hcto = remainder_us + RADIO_TIFS;
 #if defined(CONFIG_BT_CTLR_PHY)
@@ -7825,6 +8219,20 @@ static void event_master(u32_t ticks_at_expire, u32_t remainder, u16_t lazy,
 		hcto += 256;
 
 		radio_tmr_hcto_configure(hcto);
+
+#if defined(CONFIG_BT_CTLR_GPIO_LNA_PIN)
+		radio_gpio_lna_setup();
+
+#if defined(CONFIG_BT_CTLR_PHY)
+		radio_gpio_pa_lna_enable(remainder_us +
+			radio_rx_ready_delay_get(conn->phy_rx) -
+			CONFIG_BT_CTLR_GPIO_LNA_OFFSET);
+#else /* !CONFIG_BT_CTLR_PHY */
+		radio_gpio_pa_lna_enable(remainder_us +
+					 radio_rx_ready_delay_get(0) -
+					 CONFIG_BT_CTLR_GPIO_LNA_OFFSET);
+#endif /* !CONFIG_BT_CTLR_PHY */
+#endif /* CONFIG_BT_CTLR_GPIO_LNA_PIN */
 	}
 #endif
 
@@ -8054,7 +8462,7 @@ static void packet_rx_allocate(u8_t max)
 	}
 }
 
-static u8_t packet_rx_acquired_count_get(void)
+static inline u8_t packet_rx_acquired_count_get(void)
 {
 	if (_radio.packet_rx_acquire >=
 	    _radio.packet_rx_last) {
@@ -8067,18 +8475,13 @@ static u8_t packet_rx_acquired_count_get(void)
 	}
 }
 
-static struct radio_pdu_node_rx *packet_rx_reserve_get(u8_t count)
+static inline struct radio_pdu_node_rx *packet_rx_reserve_get(u8_t count)
 {
-	struct radio_pdu_node_rx *radio_pdu_node_rx;
-
 	if (count > packet_rx_acquired_count_get()) {
 		return 0;
 	}
 
-	radio_pdu_node_rx = _radio.packet_rx[_radio.packet_rx_last];
-	radio_pdu_node_rx->hdr.type = NODE_RX_TYPE_DC_PDU;
-
-	return radio_pdu_node_rx;
+	return _radio.packet_rx[_radio.packet_rx_last];
 }
 
 static void packet_rx_callback(void)
@@ -8571,16 +8974,20 @@ static inline u32_t phy_upd_ind(struct radio_pdu_node_rx *radio_pdu_node_rx,
 	if (!((p->m_to_s_phy | p->s_to_m_phy) & 0x07)) {
 		struct radio_le_phy_upd_cmplt *p;
 
-		/* Ignore event generation if not local cmd initiated */
+		/* Not in PHY Update Procedure or PDU in wrong state */
 		if ((conn->llcp_phy.ack == conn->llcp_phy.req) ||
-		    (conn->llcp_phy.state != LLCP_PHY_STATE_RSP_WAIT) ||
-		    (!conn->llcp_phy.cmd)) {
+		    (conn->llcp_phy.state != LLCP_PHY_STATE_RSP_WAIT)) {
 			return 0;
 		}
 
 		/* Procedure complete */
 		conn->llcp_phy.ack = conn->llcp_phy.req;
 		conn->procedure_expire = 0;
+
+		/* Ignore event generation if not local cmd initiated */
+		if (!conn->llcp_phy.cmd) {
+			return 0;
+		}
 
 		/* generate phy update complete event */
 		radio_pdu_node_rx->hdr.type = NODE_RX_TYPE_PHY_UPDATE;
@@ -8997,6 +9404,9 @@ static inline void role_active_disable(u8_t ticker_id_stop,
 		}
 
 		if (ret_cb == TICKER_STATUS_SUCCESS) {
+			/* If in reduced prepare, use the absolute value */
+			ticks_xtal_to_start &= ~BIT(31);
+
 			/* Step 2.1.1: Check and deassert Radio Active or XTAL
 			 * start
 			 */
@@ -9041,29 +9451,37 @@ static inline void role_active_disable(u8_t ticker_id_stop,
 			LL_ASSERT(0);
 		}
 	} else if (ret_cb == TICKER_STATUS_FAILURE) {
-		u32_t volatile ret_cb = TICKER_STATUS_BUSY;
-		u32_t ret;
-
 		/* Step 3: Caller inside Event, handle graceful stop of Event
 		 * (role dependent)
 		 */
+
 		/* Stop ticker "may" be in use for direct adv or scanner,
 		 * hence stop may fail if ticker not used.
+		 *
+		 * Connection instances do not use a stop ticker, hence do not
+		 * try to stop an invalid ticker id.
 		 */
-		ret = ticker_stop(RADIO_TICKER_INSTANCE_ID_RADIO,
-				  RADIO_TICKER_USER_ID_APP, ticker_id_stop,
-				  ticker_if_done, (void *)&ret_cb);
+		if (ticker_id_stop != TICKER_NULL) {
+			u32_t volatile ret_cb = TICKER_STATUS_BUSY;
+			u32_t ret;
 
-		if (ret == TICKER_STATUS_BUSY) {
-			mayfly_enable(RADIO_TICKER_USER_ID_APP,
-				      RADIO_TICKER_USER_ID_JOB, 1);
+			ret = ticker_stop(RADIO_TICKER_INSTANCE_ID_RADIO,
+					  RADIO_TICKER_USER_ID_APP,
+					  ticker_id_stop, ticker_if_done,
+					  (void *)&ret_cb);
 
-			LL_ASSERT(ret_cb != TICKER_STATUS_BUSY);
+			if (ret == TICKER_STATUS_BUSY) {
+				mayfly_enable(RADIO_TICKER_USER_ID_APP,
+					      RADIO_TICKER_USER_ID_JOB, 1);
+
+				LL_ASSERT(ret_cb != TICKER_STATUS_BUSY);
+			}
+
+			LL_ASSERT((ret_cb == TICKER_STATUS_SUCCESS) ||
+				  (ret_cb == TICKER_STATUS_FAILURE));
 		}
 
-		LL_ASSERT((ret_cb == TICKER_STATUS_SUCCESS) ||
-			  (ret_cb == TICKER_STATUS_FAILURE));
-
+		/* Force Radio ISR execution and wait for role to stop */
 		if (_radio.role != ROLE_NONE) {
 			static void *s_link[2];
 			static struct mayfly s_mfy_radio_stop = {0, 0, s_link,

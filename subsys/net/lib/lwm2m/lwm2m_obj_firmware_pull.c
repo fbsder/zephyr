@@ -15,6 +15,7 @@
 
 #include <stdio.h>
 #include <net/zoap.h>
+#include <net/net_app.h>
 #include <net/net_core.h>
 #include <net/net_pkt.h>
 #include <net/udp.h>
@@ -25,121 +26,84 @@
 #define STATE_IDLE		0
 #define STATE_CONNECTING	1
 
-#define PACKAGE_URI_LEN				255
+#define PACKAGE_URI_LEN		255
 
-#define BUF_ALLOC_TIMEOUT K_SECONDS(1)
+#define BUF_ALLOC_TIMEOUT	K_SECONDS(1)
+#define NETWORK_INIT_TIMEOUT	K_SECONDS(10)
+#define NETWORK_CONNECT_TIMEOUT	K_SECONDS(10)
 
 static u8_t transfer_state;
 static struct k_work firmware_work;
 static char firmware_uri[PACKAGE_URI_LEN];
 static struct sockaddr firmware_addr;
-static struct net_context *firmware_net_ctx;
-static struct k_delayed_work retransmit_work;
-
-#define NUM_PENDINGS	CONFIG_LWM2M_ENGINE_MAX_PENDING
-#define NUM_REPLIES	CONFIG_LWM2M_ENGINE_MAX_REPLIES
-static struct zoap_pending pendings[NUM_PENDINGS];
-static struct zoap_reply replies[NUM_REPLIES];
+static struct lwm2m_ctx firmware_ctx;
 static struct zoap_block_context firmware_block_ctx;
 
 static void
-firmware_udp_receive(struct net_context *ctx, struct net_pkt *pkt, int status,
-		     void *user_data)
+firmware_udp_receive(struct net_app_ctx *app_ctx, struct net_pkt *pkt,
+		     int status, void *user_data)
 {
-	lwm2m_udp_receive(ctx, pkt, pendings, NUM_PENDINGS,
-			  replies, NUM_REPLIES, true, NULL);
+	lwm2m_udp_receive(&firmware_ctx, pkt, true, NULL);
 }
 
-static void retransmit_request(struct k_work *work)
+static void do_transmit_timeout_cb(struct lwm2m_message *msg)
 {
-	struct zoap_pending *pending;
-	int r;
-
-	pending = zoap_pending_next_to_expire(pendings, NUM_PENDINGS);
-	if (!pending) {
-		return;
-	}
-
-	r = lwm2m_udp_sendto(pending->pkt, &pending->addr);
-	if (r < 0) {
-		return;
-	}
-
-	if (!zoap_pending_cycle(pending)) {
-		zoap_pending_clear(pending);
-		return;
-	}
-
-	k_delayed_work_submit(&retransmit_work, pending->timeout);
+	/* TODO: Handle timeout */
 }
 
 static int transfer_request(struct zoap_block_context *ctx,
 			    const u8_t *token, u8_t tkl,
 			    zoap_reply_t reply_cb)
 {
-	struct zoap_packet request;
-	struct net_pkt *pkt = NULL;
-	struct zoap_pending *pending = NULL;
-	struct zoap_reply *reply = NULL;
+	struct lwm2m_message *msg;
 	int ret;
 
-	ret = lwm2m_init_message(firmware_net_ctx, &request, &pkt,
-				 ZOAP_TYPE_CON, ZOAP_METHOD_GET,
-				 0, token, tkl);
+	msg = lwm2m_get_message(&firmware_ctx);
+	if (!msg) {
+		SYS_LOG_ERR("Unable to get a lwm2m message!");
+		return -ENOMEM;
+	}
+
+	msg->type = ZOAP_TYPE_CON;
+	msg->code = ZOAP_METHOD_GET;
+	msg->mid = 0;
+	msg->token = token;
+	msg->tkl = tkl;
+	msg->reply_cb = reply_cb;
+	msg->message_timeout_cb = do_transmit_timeout_cb;
+
+	ret = lwm2m_init_message(msg);
 	if (ret) {
 		goto cleanup;
 	}
 
 	/* hard code URI path here -- should be pulled from package_uri */
-	ret = zoap_add_option(&request, ZOAP_OPTION_URI_PATH,
+	ret = zoap_add_option(&msg->zpkt, ZOAP_OPTION_URI_PATH,
 			"large-create", sizeof("large-create") - 1);
-	ret = zoap_add_option(&request, ZOAP_OPTION_URI_PATH,
+	ret = zoap_add_option(&msg->zpkt, ZOAP_OPTION_URI_PATH,
 			"1", sizeof("1") - 1);
 	if (ret < 0) {
 		SYS_LOG_ERR("Error adding URI_QUERY 'large'");
 		goto cleanup;
 	}
 
-	ret = zoap_add_block2_option(&request, ctx);
+	ret = zoap_add_block2_option(&msg->zpkt, ctx);
 	if (ret) {
 		SYS_LOG_ERR("Unable to add block2 option.");
 		goto cleanup;
 	}
 
-	pending = lwm2m_init_message_pending(&request, &firmware_addr,
-					     pendings, NUM_PENDINGS);
-	if (!pending) {
-		ret = -ENOMEM;
-		goto cleanup;
-	}
-
-	/* set the reply handler */
-	if (reply_cb) {
-		reply = zoap_reply_next_unused(replies, NUM_REPLIES);
-		if (!reply) {
-			SYS_LOG_ERR("No resources for waiting for replies.");
-			ret = -ENOMEM;
-			goto cleanup;
-		}
-
-		zoap_reply_init(reply, &request);
-		reply->reply = reply_cb;
-	}
-
 	/* send request */
-	ret = lwm2m_udp_sendto(pkt, &firmware_addr);
+	ret = lwm2m_send_message(msg);
 	if (ret < 0) {
-		SYS_LOG_ERR("Error sending LWM2M packet (err:%d).",
-			    ret);
+		SYS_LOG_ERR("Error sending LWM2M packet (err:%d).", ret);
 		goto cleanup;
 	}
 
-	zoap_pending_cycle(pending);
-	k_delayed_work_submit(&retransmit_work, pending->timeout);
 	return 0;
 
 cleanup:
-	lwm2m_init_message_cleanup(pkt, pending, reply);
+	lwm2m_release_message(msg);
 	return ret;
 }
 
@@ -219,15 +183,6 @@ static enum zoap_block_size default_block_size(void)
 
 static void firmware_transfer(struct k_work *work)
 {
-#if defined(CONFIG_NET_IPV6)
-	static struct sockaddr_in6 any_addr6 = { .sin6_addr = IN6ADDR_ANY_INIT,
-						.sin6_family = AF_INET6 };
-#endif
-#if defined(CONFIG_NET_IPV4)
-	static struct sockaddr_in any_addr4 = { .sin_addr = INADDR_ANY_INIT,
-					       .sin_family = AF_INET };
-#endif
-	struct net_if *iface;
 	int ret, port, family;
 
 	/* Server Peer IP information */
@@ -255,45 +210,28 @@ static void firmware_transfer(struct k_work *work)
 	}
 #endif
 
-	ret = net_context_get(firmware_addr.sa_family, SOCK_DGRAM, IPPROTO_UDP,
-			      &firmware_net_ctx);
+	ret = net_app_init_udp_client(&firmware_ctx.net_app_ctx, NULL,
+				      &firmware_addr, NULL, port,
+				      firmware_ctx.net_init_timeout, NULL);
 	if (ret) {
 		NET_ERR("Could not get an UDP context (err:%d)", ret);
 		return;
 	}
 
-	iface = net_if_get_default();
-	if (!iface) {
-		NET_ERR("Could not find default interface");
-		goto cleanup;
-	}
-
-#if defined(CONFIG_NET_IPV6)
-	if (firmware_addr.sa_family == AF_INET6) {
-		ret = net_context_bind(firmware_net_ctx,
-				       (struct sockaddr *)&any_addr6,
-				       sizeof(any_addr6));
-	}
-#endif
-
-#if defined(CONFIG_NET_IPV4)
-	if (firmware_addr.sa_family == AF_INET) {
-		ret = net_context_bind(firmware_net_ctx,
-				       (struct sockaddr *)&any_addr4,
-				       sizeof(any_addr4));
-	}
-#endif
-
-	if (ret) {
-		NET_ERR("Could not bind the UDP context (err:%d)", ret);
-		goto cleanup;
-	}
-
 	SYS_LOG_DBG("Attached to port: %d", port);
-	ret = net_context_recv(firmware_net_ctx, firmware_udp_receive, 0, NULL);
+
+	/* set net_app callbacks */
+	ret = net_app_set_cb(&firmware_ctx.net_app_ctx, NULL,
+			     firmware_udp_receive, NULL, NULL);
 	if (ret) {
-		SYS_LOG_ERR("Could not set receive for net context (err:%d)",
-			    ret);
+		SYS_LOG_ERR("Could not set receive callback (err:%d)", ret);
+		goto cleanup;
+	}
+
+	ret = net_app_connect(&firmware_ctx.net_app_ctx,
+			      firmware_ctx.net_timeout);
+	if (ret < 0) {
+		SYS_LOG_ERR("Cannot connect UDP (%d)", ret);
 		goto cleanup;
 	}
 
@@ -305,9 +243,8 @@ static void firmware_transfer(struct k_work *work)
 	return;
 
 cleanup:
-	if (firmware_net_ctx) {
-		net_context_put(firmware_net_ctx);
-	}
+	net_app_close(&firmware_ctx.net_app_ctx);
+	net_app_release(&firmware_ctx.net_app_ctx);
 }
 
 /* TODO: */
@@ -319,13 +256,16 @@ int lwm2m_firmware_cancel_transfer(void)
 int lwm2m_firmware_start_transfer(char *package_uri)
 {
 	/* free up old context */
-	if (firmware_net_ctx) {
-		net_context_put(firmware_net_ctx);
+	if (firmware_ctx.net_app_ctx.is_init) {
+		net_app_close(&firmware_ctx.net_app_ctx);
+		net_app_release(&firmware_ctx.net_app_ctx);
 	}
 
 	if (transfer_state == STATE_IDLE) {
+		memset(&firmware_ctx, 0, sizeof(struct lwm2m_ctx));
+		firmware_ctx.net_init_timeout = NETWORK_INIT_TIMEOUT;
+		firmware_ctx.net_timeout = NETWORK_CONNECT_TIMEOUT;
 		k_work_init(&firmware_work, firmware_transfer);
-		k_delayed_work_init(&retransmit_work, retransmit_request);
 
 		/* start file transfer work */
 		strncpy(firmware_uri, package_uri, PACKAGE_URI_LEN - 1);

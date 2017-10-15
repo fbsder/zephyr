@@ -639,7 +639,23 @@ int net_app_send_pkt(struct net_app_ctx *ctx,
 		return -ENOENT;
 	}
 
-	net_pkt_set_appdatalen(pkt, net_buf_frags_len(pkt->frags));
+	/* Get rid of IP + UDP/TCP header if it is there. The IP header
+	 * will be put back just before sending the packet. Normally the
+	 * data that is sent does not contain IP header, but if the caller
+	 * replies the packet directly back, the IP header could be there
+	 * at this point.
+	 */
+	if (net_pkt_appdatalen(pkt) > 0) {
+		int header_len;
+
+		header_len = net_buf_frags_len(pkt->frags) -
+			net_pkt_appdatalen(pkt);
+		if (header_len > 0) {
+			net_buf_pull(pkt->frags, header_len);
+		}
+	} else {
+		net_pkt_set_appdatalen(pkt, net_buf_frags_len(pkt->frags));
+	}
 
 	if (ctx->proto == IPPROTO_UDP) {
 		if (!dst) {
@@ -848,7 +864,7 @@ int net_app_close(struct net_app_ctx *ctx)
 	return 0;
 }
 
-#if defined(CONFIG_NET_APP_TLS)
+#if defined(CONFIG_NET_APP_TLS) || defined(CONFIG_NET_APP_DTLS)
 #if defined(MBEDTLS_DEBUG_C) && defined(CONFIG_NET_DEBUG_APP)
 static void my_debug(void *ctx, int level,
 		     const char *file, int line, const char *str)
@@ -1041,8 +1057,6 @@ static int dtls_timing_get_delay(void *data)
 
 static void dtls_cleanup(struct net_app_ctx *ctx, bool cancel_timer)
 {
-	ctx->dtls.fin_timer_cancelled = true;
-
 	if (cancel_timer) {
 		k_delayed_work_cancel(&ctx->dtls.fin_timer);
 	}
@@ -1060,11 +1074,9 @@ static void dtls_timeout(struct k_work *work)
 	struct net_app_ctx *ctx =
 		CONTAINER_OF(work, struct net_app_ctx, dtls.fin_timer);
 
-	if (!ctx->dtls.fin_timer_cancelled) {
-		NET_DBG("Did not receive DTLS traffic in %dms", DTLS_TIMEOUT);
+	NET_DBG("Did not receive DTLS traffic in %dms", DTLS_TIMEOUT);
 
-		dtls_cleanup(ctx, false);
-	}
+	dtls_cleanup(ctx, false);
 }
 
 enum net_verdict _net_app_dtls_established(struct net_conn *conn,
@@ -1117,12 +1129,10 @@ enum net_verdict _net_app_dtls_established(struct net_conn *conn,
 
 	k_fifo_put(&ctx->tls.mbedtls.ssl_ctx.tx_rx_fifo, (void *)rx_data);
 
-	ctx->dtls.fin_timer_cancelled = true;
 	k_delayed_work_cancel(&ctx->dtls.fin_timer);
 
 	k_yield();
 
-	ctx->dtls.fin_timer_cancelled = false;
 	k_delayed_work_submit(&ctx->dtls.fin_timer, DTLS_TIMEOUT);
 
 	return NET_OK;
@@ -1226,7 +1236,6 @@ static int accept_dtls(struct net_app_ctx *ctx,
 
 	ctx->dtls.ctx = dtls_context;
 
-	ctx->dtls.fin_timer_cancelled = false;
 	k_delayed_work_submit(&ctx->dtls.fin_timer, DTLS_TIMEOUT);
 
 	return 0;
@@ -1279,17 +1288,6 @@ void _net_app_tls_received(struct net_context *context,
 			net_pkt_unref(pkt);
 			return;
 		} else {
-			if (ctx->dtls.fin_timer_cancelled) {
-				if (pkt) {
-					net_pkt_unref(pkt);
-					pkt = NULL;
-				}
-
-				ctx->dtls.fin_timer_cancelled = false;
-
-				goto dtls_disconnect;
-			}
-
 			ret = accept_dtls(ctx, context, pkt);
 			if (ret < 0) {
 				NET_DBG("Cannot accept new DTLS "
@@ -1303,7 +1301,6 @@ void _net_app_tls_received(struct net_context *context,
 			 */
 		}
 	}
-dtls_disconnect:
 #endif /* CONFIG_NET_APP_DTLS */
 
 	ret = k_mem_pool_alloc(ctx->tls.pool, &block,
@@ -1476,6 +1473,25 @@ int _net_app_ssl_mux(void *context, unsigned char *buf, size_t size)
 			NET_ERR("Buf overflow (%d > %u)", len,
 				ctx->tls.mbedtls.ssl_ctx.frag->size);
 			return -EINVAL;
+		}
+
+		/* Save the IP header so that we can pass it to application. */
+		if (!ctx->tls.mbedtls.ssl_ctx.hdr) {
+			/* Only allocate a IP fragment header once. The header
+			 * is same for every packet so we can ignore the
+			 * duplicated one.
+			 */
+			ctx->tls.mbedtls.ssl_ctx.hdr =
+				net_pkt_get_frag(
+					ctx->tls.mbedtls.ssl_ctx.rx_pkt,
+					BUF_ALLOC_TIMEOUT);
+
+			if (ctx->tls.mbedtls.ssl_ctx.hdr) {
+				net_buf_add_mem(
+					ctx->tls.mbedtls.ssl_ctx.hdr,
+					ctx->tls.mbedtls.ssl_ctx.frag->data,
+					len);
+			}
 		}
 
 		/* This will get rid of IP header */
@@ -1686,6 +1702,28 @@ reset:
 				goto close;
 			}
 
+			/* Add the IP + UDP/TCP headers if found. This is done
+			 * just in case the application needs to get some info
+			 * from the IP header.
+			 */
+			if (ctx->tls.mbedtls.ssl_ctx.hdr) {
+				net_pkt_frag_add(pkt,
+						 ctx->tls.mbedtls.ssl_ctx.hdr);
+#if defined(CONFIG_NET_IPV6)
+				if (net_pkt_family(pkt) == AF_INET6) {
+					net_pkt_set_ip_hdr_len(pkt,
+						sizeof(struct net_ipv6_hdr));
+				}
+#endif
+#if defined(CONFIG_NET_IPV4)
+				if (net_pkt_family(pkt) == AF_INET) {
+					net_pkt_set_ip_hdr_len(pkt,
+						sizeof(struct net_ipv4_hdr));
+				}
+#endif
+				ctx->tls.mbedtls.ssl_ctx.hdr = NULL;
+			}
+
 			ret = net_pkt_append_all(pkt, len,
 						 ctx->tls.request_buf,
 						 BUF_ALLOC_TIMEOUT);
@@ -1715,6 +1753,11 @@ close:
 	 */
 	if (ret != -EIO) {
 		_net_app_print_error("Closing connection -0x%x", ret);
+
+		if (ctx->tls.mbedtls.ssl_ctx.hdr) {
+			net_pkt_frag_unref(ctx->tls.mbedtls.ssl_ctx.hdr);
+			ctx->tls.mbedtls.ssl_ctx.hdr = NULL;
+		}
 	}
 
 #if defined(CONFIG_NET_APP_DTLS)
@@ -1928,5 +1971,5 @@ void _net_app_tls_handler_stop(struct net_app_ctx *ctx)
 	k_thread_abort(ctx->tls.tid);
 	ctx->tls.tid = 0;
 }
-#endif /* CONFIG_NET_APP_TLS */
+#endif /* CONFIG_NET_APP_TLS || CONFIG_NET_APP_DTLS */
 

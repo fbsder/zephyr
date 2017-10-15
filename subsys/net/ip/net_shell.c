@@ -43,6 +43,10 @@
 #include "rpl.h"
 #endif
 
+#if defined(CONFIG_NET_ARP)
+#include <net/arp.h>
+#endif
+
 #include "net_shell.h"
 #include "net_stats.h"
 
@@ -133,7 +137,7 @@ static const char *iface2str(struct net_if *iface, const char **extra)
 	}
 #endif
 
-#ifdef CONFIG_NET_L2_OFFLOAD
+#ifdef CONFIG_NET_OFFLOAD
 	if (iface->l2 == &NET_L2_GET_NAME(OFFLOAD_IP)) {
 		if (extra) {
 			*extra = "==========";
@@ -163,7 +167,7 @@ static void iface_cb(struct net_if *iface, void *user_data)
 
 	ARG_UNUSED(user_data);
 
-	printk("Interface %p (%s)\n", iface, iface2str(iface, &extra));
+	printk("\nInterface %p (%s)\n", iface, iface2str(iface, &extra));
 	printk("=======================%s\n", extra);
 
 	if (!net_if_is_up(iface)) {
@@ -256,6 +260,21 @@ static void iface_cb(struct net_if *iface, void *user_data)
 #endif /* CONFIG_NET_IPV6 */
 
 #if defined(CONFIG_NET_IPV4)
+	/* No need to print IPv4 information for interface that does not
+	 * support that protocol.
+	 */
+	if (
+#if defined(CONFIG_NET_L2_IEEE802154)
+		(iface->l2 == &NET_L2_GET_NAME(IEEE802154)) ||
+#endif
+#if defined(CONFIG_NET_L2_BT)
+		 (iface->l2 == &NET_L2_GET_NAME(BLUETOOTH)) ||
+#endif
+		 0) {
+		printk("IPv4 not supported for this interface.\n");
+		return;
+	}
+
 	count = 0;
 
 	printk("IPv4 unicast addresses (max %d):\n", NET_IF_MAX_IPV4_ADDR);
@@ -342,14 +361,14 @@ static void route_cb(struct net_route_entry *entry, void *user_data)
 			continue;
 		}
 
-		printk("\tneighbor  : %p\n", nexthop_route->nbr);
+		printk("\tneighbor : %p\t", nexthop_route->nbr);
 
 		if (nexthop_route->nbr->idx == NET_NBR_LLADDR_UNKNOWN) {
-			printk("\tlink addr : <unknown>\n");
+			printk("addr : <unknown>\n");
 		} else {
 			lladdr = net_nbr_get_lladdr(nexthop_route->nbr->idx);
 
-			printk("\tlink addr : %s\n",
+			printk("addr : %s\n",
 			       net_sprint_ll_addr(lladdr->addr,
 						  lladdr->len));
 		}
@@ -368,7 +387,7 @@ static void iface_per_route_cb(struct net_if *iface, void *user_data)
 
 	ARG_UNUSED(user_data);
 
-	printk("IPv6 routes for interface %p (%s)\n", iface,
+	printk("\nIPv6 routes for interface %p (%s)\n", iface,
 	       iface2str(iface, &extra));
 	printk("=======================================%s\n", extra);
 
@@ -827,6 +846,34 @@ int net_shell_cmd_allocs(int argc, char *argv[])
 
 #if defined(CONFIG_NET_DEBUG_APP) && \
 	(defined(CONFIG_NET_APP_SERVER) || defined(CONFIG_NET_APP_CLIENT))
+
+#if defined(CONFIG_NET_APP_TLS) || defined(CONFIG_NET_APP_DTLS)
+static void print_app_sec_info(struct net_app_ctx *ctx, const char *sec_type)
+{
+	printk("     Security: %s  Thread id: %p\n", sec_type, ctx->tls.tid);
+
+#if defined(CONFIG_INIT_STACKS)
+	{
+		unsigned int pcnt, unused;
+
+		net_analyze_stack_get_values(
+			K_THREAD_STACK_BUFFER(ctx->tls.stack),
+			ctx->tls.stack_size,
+			&pcnt, &unused);
+		printk("     Stack: %p  Size: %d bytes unused %u usage "
+		       "%u/%d (%u %%)\n",
+		       ctx->tls.stack, ctx->tls.stack_size,
+		       unused, ctx->tls.stack_size - unused,
+		       ctx->tls.stack_size, pcnt);
+	}
+#endif /* CONFIG_INIT_STACKS */
+
+	if (ctx->tls.cert_host) {
+		printk("     Cert host: %s\n", ctx->tls.cert_host);
+	}
+}
+#endif /* CONFIG_NET_APP_TLS || CONFIG_NET_APP_DTLS */
+
 static void net_app_cb(struct net_app_ctx *ctx, void *user_data)
 {
 	int *count = user_data;
@@ -858,10 +905,14 @@ static void net_app_cb(struct net_app_ctx *ctx, void *user_data)
 	}
 
 	if (IS_ENABLED(CONFIG_NET_APP_TLS) && ctx->is_tls) {
+		if (ctx->sock_type == SOCK_STREAM) {
+			sec_type = "TLS";
+		}
+	}
+
+	if (IS_ENABLED(CONFIG_NET_APP_DTLS) && ctx->is_tls) {
 		if (ctx->sock_type == SOCK_DGRAM) {
 			sec_type = "DTLS";
-		} else {
-			sec_type = "TLS";
 		}
 	}
 
@@ -891,28 +942,11 @@ static void net_app_cb(struct net_app_ctx *ctx, void *user_data)
 	       *count, ctx, ctx->is_enabled ? "enabled" : "disabled",
 	       app_type, proto);
 
-#if defined(CONFIG_NET_APP_TLS)
-	printk("     Security: %s  Thread id: %p\n", sec_type, ctx->tls.tid);
-
-#if defined(CONFIG_INIT_STACKS)
-	{
-		unsigned int pcnt, unused;
-
-		net_analyze_stack_get_values(
-			K_THREAD_STACK_BUFFER(ctx->tls.stack),
-			ctx->tls.stack_size,
-			&pcnt, &unused);
-		printk("     Stack: %p  Size: %d bytes unused %u usage "
-		       "%u/%d (%u %%)\n",
-		       ctx->tls.stack, ctx->tls.stack_size,
-		       unused, ctx->tls.stack_size - unused,
-		       ctx->tls.stack_size, pcnt);
+#if defined(CONFIG_NET_APP_TLS) || defined(CONFIG_NET_APP_DTLS)
+	if (ctx->is_tls) {
+		print_app_sec_info(ctx, sec_type);
 	}
-#endif /* CONFIG_INIT_STACKS */
-	if (ctx->tls.cert_host) {
-		printk("     Cert host: %s\n", ctx->tls.cert_host);
-	}
-#endif /* CONFIG_NET_APP_TLS */
+#endif /* CONFIG_NET_APP_TLS || CONFIG_NET_APP_DTLS */
 
 #if defined(CONFIG_NET_IPV6)
 	if (ctx->app_type == NET_APP_SERVER) {
@@ -1036,6 +1070,43 @@ int net_shell_cmd_app(int argc, char *argv[])
 	return 0;
 }
 
+#if defined(CONFIG_NET_ARP)
+static void arp_cb(struct arp_entry *entry, void *user_data)
+{
+	int *count = user_data;
+
+	if (*count == 0) {
+		printk("     Interface  Link              Address\n");
+	}
+
+	printk("[%2d] %p %s %s\n", *count, entry->iface,
+	       net_sprint_ll_addr(entry->eth.addr,
+				  sizeof(struct net_eth_addr)),
+	       net_sprint_ipv4_addr(&entry->ip));
+
+	(*count)++;
+}
+#endif /* CONFIG_NET_ARP */
+
+int net_shell_cmd_arp(int argc, char *argv[])
+{
+	ARG_UNUSED(argc);
+	ARG_UNUSED(argv);
+
+#if defined(CONFIG_NET_ARP)
+	int count = 0;
+
+	if (net_arp_foreach(arp_cb, &count) == 0) {
+		printk("ARP cache is empty.\n");
+	}
+#else
+	printk("Enable CONFIG_NET_ARP, CONFIG_NET_IPV4 and "
+	       "CONFIG_NET_L2_ETHERNET to see ARP information.\n");
+#endif
+
+	return 0;
+}
+
 int net_shell_cmd_conn(int argc, char *argv[])
 {
 	int count = 0;
@@ -1066,8 +1137,8 @@ int net_shell_cmd_conn(int argc, char *argv[])
 #endif
 
 #if defined(CONFIG_NET_TCP)
-	printk("\nTCP        Src port  Dst port   Send-Seq   Send-Ack  MSS    "
-	       "State\n");
+	printk("\nTCP        Src port  Dst port   Send-Seq   Send-Ack  MSS"
+	       "%s\n", IS_ENABLED(CONFIG_NET_DEBUG_TCP) ? "    State" : "");
 
 	count = 0;
 
@@ -1154,7 +1225,7 @@ static void print_dns_info(struct dns_resolve_context *ctx)
 
 	printk("DNS servers:\n");
 
-	for (i = 0; i < CONFIG_DNS_RESOLVER_MAX_SERVERS; i++) {
+	for (i = 0; i < CONFIG_DNS_RESOLVER_MAX_SERVERS + MDNS_SERVER_COUNT; i++) {
 		if (ctx->servers[i].dns_server.sa_family == AF_INET) {
 			printk("\t%s:%u\n",
 			       net_sprint_ipv4_addr(
@@ -1516,26 +1587,39 @@ int net_shell_cmd_mem(int argc, char *argv[])
 static void nbr_cb(struct net_nbr *nbr, void *user_data)
 {
 	int *count = user_data;
+	char *padding = "";
+	char *state_pad = "";
+	const char *state_str;
+
+#if defined(CONFIG_NET_L2_IEEE802154)
+	padding = "      ";
+#endif
 
 	if (*count == 0) {
-		char *padding = "";
-
-		if (net_nbr_get_lladdr(nbr->idx)->len == 8) {
-			padding = "      ";
-		}
-
-		printk("     Neighbor   Flags   Interface  State\t"
-		       "Remain\tLink              %sAddress\n", padding);
+		printk("     Neighbor   Interface        Flags State     "
+		       "Remain  Link              %sAddress\n", padding);
 	}
 
 	(*count)++;
 
-	printk("[%2d] %p %d/%d/%d/%d %p %9s\t%6d\t%17s %s\n",
-	       *count, nbr, nbr->ref, net_ipv6_nbr_data(nbr)->ns_count,
-	       net_ipv6_nbr_data(nbr)->is_router,
+	state_str = net_ipv6_nbr_state2str(net_ipv6_nbr_data(nbr)->state);
+
+	/* This is not a proper way but the minimal libc does not honor
+	 * string lengths in %s modifier so in order the output to look
+	 * nice, do it like this.
+	 */
+	if (strlen(state_str) == 5) {
+		state_pad = "    ";
+	}
+
+	printk("[%2d] %p %p %5d/%d/%d/%d %s%s %6d  %17s%s %s\n",
+	       *count, nbr, nbr->iface,
 	       net_ipv6_nbr_data(nbr)->link_metric,
-	       nbr->iface,
-	       net_ipv6_nbr_state2str(net_ipv6_nbr_data(nbr)->state),
+	       nbr->ref,
+	       net_ipv6_nbr_data(nbr)->ns_count,
+	       net_ipv6_nbr_data(nbr)->is_router,
+	       state_str,
+	       state_pad,
 #if defined(CONFIG_NET_IPV6_ND)
 	       k_delayed_work_remaining_get(
 		       &net_ipv6_nbr_data(nbr)->reachable),
@@ -1546,6 +1630,7 @@ static void nbr_cb(struct net_nbr *nbr, void *user_data)
 	       net_sprint_ll_addr(
 		       net_nbr_get_lladdr(nbr->idx)->addr,
 		       net_nbr_get_lladdr(nbr->idx)->len),
+	       net_nbr_get_lladdr(nbr->idx)->len == 8 ? "" : padding,
 	       net_sprint_ipv6_addr(&net_ipv6_nbr_data(nbr)->addr));
 }
 #endif
@@ -1576,7 +1661,7 @@ int net_shell_cmd_nbr(int argc, char *argv[])
 			return 0;
 		}
 
-		if (!net_ipv6_nbr_rm(net_if_get_default(), &addr)) {
+		if (!net_ipv6_nbr_rm(NULL, &addr)) {
 			printk("Cannot remove neighbor %s\n",
 			       net_sprint_ipv6_addr(&addr));
 		} else {
@@ -1635,7 +1720,13 @@ static enum net_verdict _handle_ipv6_echo_reply(struct net_pkt *pkt)
 static int _ping_ipv6(char *host)
 {
 	struct in6_addr ipv6_target;
+	struct net_if *iface = net_if_get_default();
+	struct net_nbr *nbr;
 	int ret;
+
+#if defined(CONFIG_NET_ROUTE)
+	struct net_route_entry *route;
+#endif
 
 	if (net_addr_pton(AF_INET6, host, &ipv6_target) < 0) {
 		return -EINVAL;
@@ -1643,7 +1734,19 @@ static int _ping_ipv6(char *host)
 
 	net_icmpv6_register_handler(&ping6_handler);
 
-	ret = net_icmpv6_send_echo_request(net_if_get_default(),
+	nbr = net_ipv6_nbr_lookup(NULL, &ipv6_target);
+	if (nbr) {
+		iface = nbr->iface;
+	}
+
+#if defined(CONFIG_NET_ROUTE)
+	route = net_route_lookup(NULL, &ipv6_target);
+	if (route) {
+		iface = route->iface;
+	}
+#endif
+
+	ret = net_icmpv6_send_echo_request(iface,
 					   &ipv6_target,
 					   sys_rand32_get(),
 					   sys_rand32_get());
@@ -2069,7 +2172,7 @@ static void get_my_ipv6_addr(struct net_if *iface,
 {
 	const struct in6_addr *my6addr;
 
-	my6addr = net_if_ipv6_select_src_addr(net_if_get_default(),
+	my6addr = net_if_ipv6_select_src_addr(iface,
 					      &net_sin6(myaddr)->sin6_addr);
 
 	memcpy(&net_sin6(myaddr)->sin6_addr, my6addr, sizeof(struct in6_addr));
@@ -2132,6 +2235,8 @@ static int tcp_connect(char *host, u16_t port, struct net_context **ctx)
 {
 	struct sockaddr addr;
 	struct sockaddr myaddr;
+	struct net_nbr *nbr;
+	struct net_if *iface = net_if_get_default();
 	int addrlen;
 	int family;
 	int ret;
@@ -2145,18 +2250,26 @@ static int tcp_connect(char *host, u16_t port, struct net_context **ctx)
 
 	net_sin6(&addr)->sin6_port = htons(port);
 	addrlen = sizeof(struct sockaddr_in6);
-	get_my_ipv6_addr(net_if_get_default(), &myaddr);
+
+	nbr = net_ipv6_nbr_lookup(NULL, &net_sin6(&addr)->sin6_addr);
+	if (nbr) {
+		iface = nbr->iface;
+	}
+
+	get_my_ipv6_addr(iface, &myaddr);
 	family = addr.sa_family = myaddr.sa_family = AF_INET6;
 #endif
 
 #if defined(CONFIG_NET_IPV4) && !defined(CONFIG_NET_IPV6)
+	ARG_UNUSED(nbr);
+
 	ret = net_addr_pton(AF_INET, host, &net_sin(&addr)->sin_addr);
 	if (ret < 0) {
 		printk("Invalid IPv4 address\n");
 		return 0;
 	}
 
-	get_my_ipv4_addr(net_if_get_default(), &myaddr);
+	get_my_ipv4_addr(iface, &myaddr);
 	net_sin(&addr)->sin_port = htons(port);
 	addrlen = sizeof(struct sockaddr_in);
 	family = addr.sa_family = myaddr.sa_family = AF_INET;
@@ -2173,12 +2286,19 @@ static int tcp_connect(char *host, u16_t port, struct net_context **ctx)
 
 		net_sin(&addr)->sin_port = htons(port);
 		addrlen = sizeof(struct sockaddr_in);
-		get_my_ipv4_addr(net_if_get_default(), &myaddr);
+
+		get_my_ipv4_addr(iface, &myaddr);
 		family = addr.sa_family = myaddr.sa_family = AF_INET;
 	} else {
 		net_sin6(&addr)->sin6_port = htons(port);
 		addrlen = sizeof(struct sockaddr_in6);
-		get_my_ipv6_addr(net_if_get_default(), &myaddr);
+
+		nbr = net_ipv6_nbr_lookup(NULL, &net_sin6(&addr)->sin6_addr);
+		if (nbr) {
+			iface = nbr->iface;
+		}
+
+		get_my_ipv6_addr(iface, &myaddr);
 		family = addr.sa_family = myaddr.sa_family = AF_INET6;
 	}
 #endif
@@ -2327,6 +2447,8 @@ static struct shell_cmd net_commands[] = {
 		"\n\tPrint network memory allocations" },
 	{ "app", net_shell_cmd_app,
 		"\n\tPrint network application API usage information" },
+	{ "arp", net_shell_cmd_arp,
+		"\n\tPrint information about IPv4 ARP cache" },
 	{ "conn", net_shell_cmd_conn,
 		"\n\tPrint information about network connections" },
 	{ "dns", net_shell_cmd_dns, "\n\tShow how DNS is configure\n"

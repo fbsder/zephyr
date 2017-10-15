@@ -150,6 +150,9 @@ struct prov_link {
 		/* Start timestamp of the transaction */
 		s64_t start;
 
+		/* Transaction id*/
+		u8_t id;
+
 		/* Pending outgoing buffer(s) */
 		struct net_buf *buf[3];
 
@@ -358,11 +361,21 @@ static u8_t last_seg(u8_t len)
 	return 1 + (len / CONT_PAYLOAD_MAX);
 }
 
+static inline u8_t next_transaction_id(void)
+{
+	if (link.tx.id != 0 && link.tx.id != 0xFF) {
+		return ++link.tx.id;
+	}
+
+	link.tx.id = 0x80;
+	return link.tx.id;
+}
+
 static int prov_send_adv(struct net_buf_simple *msg)
 {
-	static u8_t id = 0x80;
 	struct net_buf *start, *buf;
 	u8_t seg_len, seg_id;
+	u8_t xact_id;
 
 	BT_DBG("len %u: %s", msg->len, bt_hex(msg->data, msg->len));
 
@@ -373,8 +386,9 @@ static int prov_send_adv(struct net_buf_simple *msg)
 		return -ENOBUFS;
 	}
 
+	xact_id = next_transaction_id();
 	net_buf_add_be32(start, link.id);
-	net_buf_add_u8(start, id);
+	net_buf_add_u8(start, xact_id);
 
 	net_buf_add_u8(start, GPC_START(last_seg(msg->len)));
 	net_buf_add_be16(start, msg->len);
@@ -409,13 +423,11 @@ static int prov_send_adv(struct net_buf_simple *msg)
 		       bt_hex(msg->data, seg_len));
 
 		net_buf_add_be32(buf, link.id);
-		net_buf_add_u8(buf, id);
+		net_buf_add_u8(buf, xact_id);
 		net_buf_add_u8(buf, GPC_CONT(seg_id));
 		net_buf_add_mem(buf, msg->data, seg_len);
 		net_buf_simple_pull(msg, seg_len);
 	}
-
-	id++;
 
 	send_reliable();
 
@@ -455,6 +467,15 @@ static void prov_buf_init(struct net_buf_simple *buf, u8_t type)
 	net_buf_simple_add_u8(buf, type);
 }
 
+static void prov_send_fail_msg(u8_t err)
+{
+	struct net_buf_simple *buf = PROV_BUF(2);
+
+	prov_buf_init(buf, PROV_FAILED);
+	net_buf_simple_add_u8(buf, err);
+	prov_send(buf);
+}
+
 static void prov_invite(const u8_t *data)
 {
 	struct net_buf_simple *buf = PROV_BUF(12);
@@ -479,7 +500,7 @@ static void prov_invite(const u8_t *data)
 	net_buf_simple_add_u8(buf, 0x00);
 
 	/* Static OOB Type */
-	net_buf_simple_add_u8(buf, prov->static_val ? BIT(1) : 0x00);
+	net_buf_simple_add_u8(buf, prov->static_val ? BIT(0) : 0x00);
 
 	/* Output OOB Size */
 	net_buf_simple_add_u8(buf, prov->output_size);
@@ -596,7 +617,8 @@ static int prov_auth(u8_t method, u8_t action, u8_t size)
 		}
 
 		if (output == BT_MESH_DISPLAY_STRING) {
-			u8_t i, str[9];
+			char str[9];
+			u8_t i;
 
 			bt_rand(str, size);
 
@@ -664,6 +686,13 @@ static void prov_start(const u8_t *data)
 
 	if (data[0] != PROV_ALG_P256) {
 		BT_ERR("Unknown algorithm 0x%02x", data[0]);
+		prov_send_fail_msg(PROV_ERR_NVAL_FMT);
+		return;
+	}
+
+	if (data[1] > 0x01) {
+		BT_ERR("Invalid public key value: 0x%02x", data[1]);
+		prov_send_fail_msg(PROV_ERR_NVAL_FMT);
 		return;
 	}
 
@@ -672,7 +701,9 @@ static void prov_start(const u8_t *data)
 	link.expect = PROV_PUB_KEY;
 
 	if (prov_auth(data[2], data[3], data[4]) < 0) {
-		BT_ERR("Invalid authentication method");
+		BT_ERR("Invalid authentication method: 0x%02x; "
+			"action: 0x%02x; size: 0x%02x", data[2], data[3], data[4]);
+		prov_send_fail_msg(PROV_ERR_NVAL_FMT);
 	}
 }
 
@@ -755,7 +786,7 @@ int bt_mesh_input_string(const char *str)
 		return 0;
 	}
 
-	strncpy(link.auth, str, prov->output_size);
+	strncpy(link.auth, str, prov->input_size);
 
 	if (atomic_test_and_clear_bit(link.flags, SEND_CONFIRM)) {
 		send_confirm();
@@ -1035,11 +1066,7 @@ static void close_link(u8_t err, u8_t reason)
 
 #if defined(CONFIG_BT_MESH_PB_ADV)
 	if (err) {
-		struct net_buf_simple *buf = PROV_BUF(2);
-
-		prov_buf_init(buf, PROV_FAILED);
-		net_buf_simple_add_u8(buf, err);
-		prov_send(buf);
+		prov_send_fail_msg(err);
 	}
 
 	link.rx.seg = 0;
@@ -1168,11 +1195,6 @@ static void prov_msg_recv(void)
 
 	BT_DBG("type 0x%02x len %u", type, link.rx.buf->len);
 
-	if (type != PROV_FAILED && type != link.expect) {
-		BT_WARN("Unexpected msg 0x%02x != 0x%02x", type, link.expect);
-		return;
-	}
-
 	if (!bt_mesh_fcs_check(link.rx.buf, link.rx.fcs)) {
 		BT_ERR("Incorrect FCS");
 		return;
@@ -1181,6 +1203,12 @@ static void prov_msg_recv(void)
 	gen_prov_ack_send(link.rx.id);
 	link.rx.prev_id = link.rx.id;
 	link.rx.id = 0;
+
+	if (type != PROV_FAILED && type != link.expect) {
+		BT_WARN("Unexpected msg 0x%02x != 0x%02x", type, link.expect);
+		prov_send_fail_msg(PROV_ERR_UNEXP_PDU);
+		return;
+	}
 
 	if (type >= ARRAY_SIZE(prov_handlers)) {
 		BT_ERR("Unknown provisioning PDU type 0x%02x", type);
@@ -1249,6 +1277,14 @@ static void gen_prov_cont(struct prov_rx *rx, struct net_buf_simple *buf)
 static void gen_prov_ack(struct prov_rx *rx, struct net_buf_simple *buf)
 {
 	BT_DBG("len %u", buf->len);
+
+	if (!link.tx.buf[0]) {
+		return;
+	}
+
+	if (rx->xact_id == link.tx.id) {
+		prov_clear_tx();
+	}
 }
 
 static void gen_prov_start(struct prov_rx *rx, struct net_buf_simple *buf)

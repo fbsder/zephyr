@@ -49,7 +49,7 @@ can be disabled if not needed.
 
 * **BSD Sockets API** Experimental support for a subset of a BSD Sockets
   compatible API is implemented. Both blocking and non-blocking DGRAM (UDP)
-  amd STREAM (TCP) sockets are supported.
+  and STREAM (TCP) sockets are supported.
 
 * **HTTP** Hypertext Transfer Protocol (RFC 2116) is supported. A simple
   library is provided that applications can use. Sample applications are
@@ -63,15 +63,15 @@ can be disabled if not needed.
   A sample :ref:`mqtt-publisher-sample` client application for MQTT v3.1.1 is
   implemented.
 
-* **CoAP** Constrained Application Protocol (RFC 7252) is supported. Both
-  Both :ref:`zoap-client-sample` and :ref:`zoap-server-sample` sample
-  applications are implemented. A :ref:`coap-client-sample` and
-  :ref:`coap-server-sample` using DTLS (Datagram Transport Layer Security)
+* **CoAP** Constrained Application Protocol (RFC 7252) is supported.
+  Both :ref:`coap-client-sample` and :ref:`coap-server-sample` sample
+  applications are implemented. A :ref:`coaps-client-sample` and
+  :ref:`coaps-server-sample` using DTLS (Datagram Transport Layer Security)
   (RFC 6347) are also implemented.
 
 * **LWM2M** OMA Lightweight Machine-to-Machine Protocol (V1.0 Feb 2017) is
   supported via the "Register Device" API (Register, De-Register and Update)
-  and has template implementations for Securty, Server, Device Management and
+  and has template implementations for Security, Server, Device Management and
   Firmware objects.   DTLS and Bootstrap support are currently not supported.
   :ref:`lwm2m-client-sample` implements the library as an example.
 

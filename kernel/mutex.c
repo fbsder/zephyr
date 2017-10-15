@@ -35,6 +35,7 @@
 #include <debug/object_tracing_common.h>
 #include <errno.h>
 #include <init.h>
+#include <syscall_handler.h>
 
 #define RECORD_STATE_CHANGE(mutex) do { } while ((0))
 #define RECORD_CONFLICT(mutex) do { } while ((0))
@@ -66,7 +67,7 @@ SYS_INIT(init_mutex_module, PRE_KERNEL_1, CONFIG_KERNEL_INIT_PRIORITY_OBJECTS);
 
 #endif /* CONFIG_OBJECT_TRACING */
 
-void k_mutex_init(struct k_mutex *mutex)
+void _impl_k_mutex_init(struct k_mutex *mutex)
 {
 	mutex->owner = NULL;
 	mutex->lock_count = 0;
@@ -77,7 +78,18 @@ void k_mutex_init(struct k_mutex *mutex)
 	sys_dlist_init(&mutex->wait_q);
 
 	SYS_TRACING_OBJ_INIT(k_mutex, mutex);
+	_k_object_init(mutex);
 }
+
+#ifdef CONFIG_USERSPACE
+_SYSCALL_HANDLER1(k_mutex_init, mutex)
+{
+	_SYSCALL_OBJ_INIT(mutex, K_OBJ_MUTEX);
+	_impl_k_mutex_init((struct k_mutex *)mutex);
+
+	return 0;
+}
+#endif
 
 static int new_prio_for_inheritance(int target, int limit)
 {
@@ -101,7 +113,7 @@ static void adjust_owner_prio(struct k_mutex *mutex, int new_prio)
 	}
 }
 
-int k_mutex_lock(struct k_mutex *mutex, s32_t timeout)
+int _impl_k_mutex_lock(struct k_mutex *mutex, s32_t timeout)
 {
 	int new_prio, key;
 
@@ -187,7 +199,15 @@ int k_mutex_lock(struct k_mutex *mutex, s32_t timeout)
 	return -EAGAIN;
 }
 
-void k_mutex_unlock(struct k_mutex *mutex)
+#ifdef CONFIG_USERSPACE
+_SYSCALL_HANDLER2(k_mutex_lock, mutex, timeout)
+{
+	_SYSCALL_OBJ(mutex, K_OBJ_MUTEX);
+	return _impl_k_mutex_lock((struct k_mutex *)mutex, (s32_t)timeout);
+}
+#endif
+
+void _impl_k_mutex_unlock(struct k_mutex *mutex)
 {
 	int key;
 
@@ -239,3 +259,7 @@ void k_mutex_unlock(struct k_mutex *mutex)
 
 	k_sched_unlock();
 }
+
+#ifdef CONFIG_USERSPACE
+_SYSCALL_HANDLER1_SIMPLE_VOID(k_mutex_unlock, K_OBJ_MUTEX, struct k_mutex *);
+#endif

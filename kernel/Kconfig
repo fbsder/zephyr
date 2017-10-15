@@ -354,6 +354,7 @@ config NUM_PIPE_ASYNC_MSGS
 
 	Setting this option to 0 disables support for asynchronous
 	pipe messages.
+
 endmenu
 
 menu "Memory Pool Options"
@@ -555,6 +556,15 @@ config STACK_CANARIES
 	If stack canaries are not supported by the compiler, enabling this
 	option has no effect.
 endmenu
+
+config MAX_DOMAIN_PARTITIONS
+	int
+	prompt "Maximum number of partitions per memory domain"
+	default 16
+	range 0 255
+	depends on USERSPACE
+	help
+	Configure the maximum number of partitions per memory domain.
 
 source "kernel/Kconfig.event_logger"
 

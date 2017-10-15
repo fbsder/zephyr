@@ -68,6 +68,7 @@ static u16_t msg_cache_next;
 
 /* Singleton network context (the implementation only supports one) */
 struct bt_mesh_net bt_mesh = {
+	.local_queue = _K_FIFO_INITIALIZER(bt_mesh.local_queue),
 	.sub = {
 		[0 ... (CONFIG_BT_MESH_SUBNET_COUNT - 1)] = {
 			.net_idx = BT_MESH_KEY_UNUSED,
@@ -470,6 +471,26 @@ int bt_mesh_net_create(u16_t idx, u8_t flags, const u8_t key[16],
 	return 0;
 }
 
+void bt_mesh_net_revoke_keys(struct bt_mesh_subnet *sub)
+{
+	int i;
+
+	BT_DBG("idx 0x%04x", sub->net_idx);
+
+	memcpy(&sub->keys[0], &sub->keys[1], sizeof(sub->keys[0]));
+
+	for (i = 0; i < ARRAY_SIZE(bt_mesh.app_keys); i++) {
+		struct bt_mesh_app_key *key = &bt_mesh.app_keys[i];
+
+		if (key->net_idx != sub->net_idx || !key->updated) {
+			continue;
+		}
+
+		memcpy(&key->keys[0], &key->keys[1], sizeof(key->keys[0]));
+		key->updated = false;
+	}
+}
+
 bool bt_mesh_kr_update(struct bt_mesh_subnet *sub, u8_t new_kr, bool new_key)
 {
 	if (new_kr != sub->kr_flag && sub->kr_phase == BT_MESH_KR_NORMAL) {
@@ -501,8 +522,7 @@ bool bt_mesh_kr_update(struct bt_mesh_subnet *sub, u8_t new_kr, bool new_key)
 		 */
 		case BT_MESH_KR_PHASE_2:
 			BT_DBG("KR Phase 0x%02x -> Normal", sub->kr_phase);
-			memcpy(&sub->keys[0], &sub->keys[1],
-			       sizeof(sub->keys[0]));
+			bt_mesh_net_revoke_keys(sub);
 			if (IS_ENABLED(CONFIG_BT_MESH_LOW_POWER) ||
 			    IS_ENABLED(CONFIG_BT_MESH_FRIEND)) {
 				bt_mesh_friend_cred_refresh(sub->net_idx);
@@ -677,7 +697,6 @@ int bt_mesh_net_resend(struct bt_mesh_subnet *sub, struct net_buf *buf,
 	return 0;
 }
 
-#if defined(CONFIG_BT_MESH_LOCAL_INTERFACE)
 static void bt_mesh_net_local(struct k_work *work)
 {
 	struct net_buf *buf;
@@ -688,7 +707,6 @@ static void bt_mesh_net_local(struct k_work *work)
 		net_buf_unref(buf);
 	}
 }
-#endif
 
 int bt_mesh_net_encode(struct bt_mesh_net_tx *tx, struct net_buf_simple *buf,
 		       bool proxy)
@@ -801,7 +819,6 @@ int bt_mesh_net_send(struct bt_mesh_net_tx *tx, struct net_buf *buf,
 		}
 	}
 
-#if defined(CONFIG_BT_MESH_LOCAL_INTERFACE)
 	/* Deliver to local network interface if necessary */
 	if (bt_mesh_fixed_group_match(tx->ctx->addr) ||
 	    bt_mesh_elem_find(tx->ctx->addr)) {
@@ -813,9 +830,6 @@ int bt_mesh_net_send(struct bt_mesh_net_tx *tx, struct net_buf *buf,
 	} else {
 		bt_mesh_adv_send(buf, cb);
 	}
-#else
-	bt_mesh_adv_send(buf, cb);
-#endif
 
 done:
 	net_buf_unref(buf);
@@ -975,9 +989,6 @@ static int net_find_and_decrypt(const u8_t *data, size_t data_len,
 	return false;
 }
 
-#if (defined(CONFIG_BT_MESH_RELAY) || \
-     defined(CONFIG_BT_MESH_FRIEND) || \
-     defined(CONFIG_BT_MESH_GATT_PROXY))
 static void bt_mesh_net_relay(struct net_buf_simple *sbuf,
 			      struct bt_mesh_net_rx *rx)
 {
@@ -988,7 +999,7 @@ static void bt_mesh_net_relay(struct net_buf_simple *sbuf,
 	BT_DBG("TTL %u CTL %u dst 0x%04x", rx->ctx.recv_ttl, CTL(sbuf->data),
 	       rx->dst);
 
-	if (rx->ctx.recv_ttl <= 1) {
+	if (rx->net_if != BT_MESH_NET_IF_LOCAL && rx->ctx.recv_ttl <= 1) {
 		return;
 	}
 
@@ -1081,7 +1092,6 @@ static void bt_mesh_net_relay(struct net_buf_simple *sbuf,
 done:
 	net_buf_unref(buf);
 }
-#endif /* RELAY || FRIEND || GATT_PROXY */
 
 int bt_mesh_net_decode(struct net_buf_simple *data, enum bt_mesh_net_if net_if,
 		       struct bt_mesh_net_rx *rx, struct net_buf_simple *buf,
@@ -1135,6 +1145,17 @@ int bt_mesh_net_decode(struct net_buf_simple *data, enum bt_mesh_net_if net_if,
 
 	BT_DBG("Decryption successful. Payload len %u", buf->len);
 
+	if (net_if != BT_MESH_NET_IF_PROXY_CFG &&
+	    rx->dst == BT_MESH_ADDR_UNASSIGNED) {
+		BT_ERR("Destination address is unassigned; dropping packet");
+		return -EBADMSG;
+	}
+
+	if (BT_MESH_ADDR_IS_RFU(rx->dst)) {
+		BT_ERR("Destination address is RFU; dropping packet");
+		return -EBADMSG;
+	}
+
 	if (net_if != BT_MESH_NET_IF_LOCAL && bt_mesh_elem_find(rx->ctx.addr)) {
 		BT_DBG("Dropping locally originated packet");
 		return -EBADMSG;
@@ -1181,12 +1202,8 @@ void bt_mesh_net_recv(struct net_buf_simple *data, s8_t rssi,
 		}
 	}
 
-#if (defined(CONFIG_BT_MESH_RELAY) || \
-     defined(CONFIG_BT_MESH_FRIEND) || \
-     defined(CONFIG_BT_MESH_GATT_PROXY))
 	net_buf_simple_restore(buf, &state);
 	bt_mesh_net_relay(buf, &rx);
-#endif /* CONFIG_BT_MESH_RELAY  || FRIEND || GATT_PROXY */
 }
 
 static void ivu_complete(struct k_work *work)
@@ -1201,7 +1218,5 @@ void bt_mesh_net_init(void)
 {
 	k_delayed_work_init(&bt_mesh.ivu_complete, ivu_complete);
 
-#if defined(CONFIG_BT_MESH_LOCAL_INTERFACE)
 	k_work_init(&bt_mesh.local_work, bt_mesh_net_local);
-#endif
 }

@@ -8,11 +8,6 @@
 #include <mmustructs.h>
 #include <linker/linker-defs.h>
 
-/* Ref to _x86_mmu_buffer_validate documentation for details  */
-#define USER_PERM_BIT_POS ((u32_t)0x1)
-#define GET_RW_PERM(flags) (flags & BUFF_WRITEABLE)
-#define GET_US_PERM(flags) ((flags & BUFF_USER) >> USER_PERM_BIT_POS)
-
 /* Common regions for all x86 processors.
  * Peripheral I/O ranges configured at the SOC level
  */
@@ -36,134 +31,41 @@ MMU_BOOT_REGION((u32_t)&__app_ram_start, (u32_t)&__app_ram_size,
 MMU_BOOT_REGION((u32_t)&__kernel_ram_start, (u32_t)&__kernel_ram_size,
 		MMU_ENTRY_WRITE | MMU_ENTRY_RUNTIME_USER);
 
-/**
- * brief check page directory flags
- *
- * This routine reads the flags of the pde and then compares it to the
- * rw_permission and us_permissions.
- *
- * return true-if the permissions of the pde matches the request
- */
-static inline u32_t check_pde_flags(volatile union x86_mmu_pde_pt pde,
-				    u32_t rw_permission,
-				    u32_t us_permission)
-{
-
-	/*  If rw bit is 0 then read is enabled else if 1 then
-	 *  read-write access is enabled. (flags & 0x1) returns a
-	 *  RW permission required. if READ is requested and the rw bit says
-	 *  it has write permission this passes through. But if a write
-	 *  permission is requested and rw bit says only read is
-	 *  allowed then this fails.
-	 */
-
-	/*  The privilage permisions possible combinations between request and
-	 *  the the mmu configuraiont are
-	 *  s s -> both supervisor                         = valid
-	 *  s u -> PDE is supervisor and requested is user = invalid
-	 *  u s -> PDE is user and requested is supervisor = valid
-	 *  u u -> both user                               = valid
-	 */
-
-	return(pde.p &&
-		(pde.rw >= rw_permission)  &&
-		!(pde.us < us_permission));
-}
-
-/**
- * brief check page table entry flags
- *
- * This routine reads the flags of the pte and then compares it to the
- * rw_permission and us_permissions.
- *
- * return true-if the permissions of the pde matches the request
- */
-static inline u32_t check_pte_flags(union x86_mmu_pte pte,
-				    u32_t rw_permission,
-				    u32_t us_permission)
-{
-	/* Ref to check_pde_flag for doc */
-	return(pte.p &&
-		(pte.rw >= rw_permission)  &&
-		!(pte.us < us_permission));
-}
-
 
 void _x86_mmu_get_flags(void *addr, u32_t *pde_flags, u32_t *pte_flags)
 {
-	int pde_index, pte_index;
 
-	union x86_mmu_pde *pde;
-	union x86_mmu_pte *pte;
-	struct x86_mmu_page_table *pt;
-
-	pde_index = MMU_PDE_NUM(addr);
-	pte_index = MMU_PAGE_NUM(addr);
-
-	pde = &X86_MMU_PD->entry[pde_index];
-	pt = (struct x86_mmu_page_table *)(pde->pt.page_table << 12);
-	pte = &pt->entry[pte_index];
-
-	*pde_flags = pde->pt.value & ~MMU_PDE_PAGE_TABLE_MASK;
-	*pte_flags = pte->value & ~MMU_PTE_PAGE_MASK;
+	*pde_flags = X86_MMU_GET_PDE(addr)->value & ~MMU_PDE_PAGE_TABLE_MASK;
+	*pte_flags = X86_MMU_GET_PTE(addr)->value & ~MMU_PTE_PAGE_MASK;
 }
 
 
-/**
- * @brief check page table entry flags
- *
- * This routine checks if the buffer is avaialable to the whoever calls
- * this API.
- * @a addr start address of the buffer
- * @a size the size of the buffer
- * @a flags permisions to check.
- *    Consists of 2 bits the bit0 represents the RW permissions
- *    The bit1 represents the user/supervisor permissions
- *    Use macro BUFF_READABLE/BUFF_WRITEABLE or BUFF_USER to build the flags
- *
- * @return true-if the permissions of the pde matches the request
- */
-int _x86_mmu_buffer_validate(void *addr, size_t size, int flags)
+int _arch_buffer_validate(void *addr, size_t size, int write)
 {
-	int status = 0;
 	u32_t start_pde_num;
 	u32_t end_pde_num;
-	/* union x86_mmu_pde_pt pde_status; */
-	volatile u32_t validity = 1;
 	u32_t starting_pte_num;
 	u32_t ending_pte_num;
 	struct x86_mmu_page_table *pte_address;
-	u32_t rw_permission;
-	u32_t us_permission;
 	u32_t pde;
 	u32_t pte;
 	union x86_mmu_pte pte_value;
 
 	start_pde_num = MMU_PDE_NUM(addr);
 	end_pde_num = MMU_PDE_NUM((char *)addr + size - 1);
-	rw_permission = GET_RW_PERM(flags);
-	us_permission = GET_US_PERM(flags);
 	starting_pte_num = MMU_PAGE_NUM((char *)addr);
 
 	/* Iterate for all the pde's the buffer might take up.
 	 * (depends on the size of the buffer and start address of the buff)
 	 */
 	for (pde = start_pde_num; pde <= end_pde_num; pde++) {
-		validity &= check_pde_flags(X86_MMU_PD->entry[pde].pt,
-					   rw_permission,
-					   us_permission);
+		union x86_mmu_pde_pt pde_value = X86_MMU_PD->entry[pde].pt;
 
-		/* If pde is invalid exit immediately. */
-		if (validity == 0) {
-			break;
+		if (!pde_value.p || !pde_value.us || (write && !pde_value.rw)) {
+			return -EPERM;
 		}
 
-		/* Get address of the page table from the pde.
-		 * This is a 20 bit address, so shift it by 12.
-		 * This gives us 4KB aligned page table.
-		 */
-		pte_address = (struct x86_mmu_page_table *)
-			(X86_MMU_PD->entry[pde].pt.page_table << 12);
+		pte_address = X86_MMU_GET_PT_ADDR(addr);
 
 		/* loop over all the possible page tables for the required
 		 * size. If the pde is not the last one then the last pte
@@ -189,19 +91,15 @@ int _x86_mmu_buffer_validate(void *addr, size_t size, int flags)
 
 		/* Bitwise AND all the pte values. */
 		for (pte = starting_pte_num; pte <= ending_pte_num; pte++) {
-
 			pte_value.value &= pte_address->entry[pte].value;
 		}
 
-		validity &= check_pte_flags(pte_value,
-					    rw_permission,
-					    us_permission);
+		if (!pte_value.p || !pte_value.us || (write && !pte_value.rw)) {
+			return -EPERM;
+		}
 	}
 
-	if (validity == 0) {
-		status = -EPERM;
-	}
-	return status;
+	return 0;
 }
 
 
@@ -217,10 +115,7 @@ static inline void tlb_flush_page(void *addr)
 
 void _x86_mmu_set_flags(void *ptr, size_t size, u32_t flags, u32_t mask)
 {
-	int pde_index, pte_index;
-	union x86_mmu_pde *pde;
 	union x86_mmu_pte *pte;
-	struct x86_mmu_page_table *pt;
 
 	u32_t addr = (u32_t)ptr;
 
@@ -228,16 +123,11 @@ void _x86_mmu_set_flags(void *ptr, size_t size, u32_t flags, u32_t mask)
 	__ASSERT(!(size & MMU_PAGE_MASK), "unaligned size provided");
 
 	while (size) {
-		pde_index = MMU_PDE_NUM(addr);
-		pde = &X86_MMU_PD->entry[pde_index];
 
 		/* TODO we're not generating 4MB entries at the moment */
-		__ASSERT(pde->fourmb.ps != 1, "4MB PDE found");
+		__ASSERT(X86_MMU_GET_4MB_PDE(addr)->ps != 1, "4MB PDE found");
 
-		pt = (struct x86_mmu_page_table *)(pde->pt.page_table << 12);
-
-		pte_index = MMU_PAGE_NUM(addr);
-		pte = &pt->entry[pte_index];
+		pte = X86_MMU_GET_PTE(addr);
 
 		pte->value = (pte->value & ~mask) | flags;
 		tlb_flush_page((void *)addr);

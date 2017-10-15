@@ -23,6 +23,7 @@
 #ifndef _ASMLANGUAGE
 #include <arch/x86/asm_inline.h>
 #include <arch/x86/addr_types.h>
+#include <arch/x86/segmentation.h>
 #endif
 
 #ifdef __cplusplus
@@ -33,6 +34,14 @@ extern "C" {
 
 #define OCTET_TO_SIZEOFUNIT(X) (X)
 #define SIZEOFUNIT_TO_OCTET(X) (X)
+
+/* GDT layout */
+#define CODE_SEG	0x08
+#define DATA_SEG	0x10
+#define MAIN_TSS	0x18
+#define DF_TSS		0x20
+#define USER_CODE_SEG	0x2b /* at dpl=3 */
+#define USER_DATA_SEG	0x33 /* at dpl=3 */
 
 /**
  * Macro used internally by NANO_CPU_INT_REGISTER and NANO_CPU_INT_REGISTER_ASM.
@@ -314,6 +323,17 @@ typedef struct nanoEsf {
 	unsigned int eflags;
 } NANO_ESF;
 
+
+struct _x86_syscall_stack_frame {
+	u32_t eip;
+	u32_t cs;
+	u32_t eflags;
+
+	/* These are only present if cs = USER_CODE_SEG */
+	u32_t esp;
+	u32_t ss;
+};
+
 /**
  * @brief "interrupt stack frame" (ISF)
  *
@@ -358,8 +378,6 @@ typedef struct nanoIsf {
 #define _NANO_ERR_PAGE_FAULT		 (1)
 /** General protection fault */
 #define _NANO_ERR_GEN_PROT_FAULT	 (2)
-/** Invalid task exit */
-#define _NANO_ERR_INVALID_TASK_EXIT  (3)
 /** Stack corruption detected */
 #define _NANO_ERR_STACK_CHK_FAIL	 (4)
 /** Kernel Allocation Failure */
@@ -532,27 +550,180 @@ extern FUNC_NORETURN void _SysFatalErrorHandler(unsigned int reason,
 
 
 #ifdef CONFIG_X86_STACK_PROTECTION
-#define _STACK_GUARD_SIZE	MMU_PAGE_SIZE
-#define _STACK_BASE_ALIGN	MMU_PAGE_SIZE
-#else
-#define _STACK_GUARD_SIZE	0
-#define _STACK_BASE_ALIGN	STACK_ALIGN
-#endif
+extern struct task_state_segment _main_tss;
 
-
-
-/* All thread stacks, regardless of whether owned by application or kernel,
- * go in the .stacks input section, which will end up in the kernel's
- * noinit.
+#ifdef CONFIG_X86_USERSPACE
+/* Syscall invocation macros. x86-specific machine constraints used to ensure
+ * args land in the proper registers, see implementation of
+ * _x86_syscall_entry_stub in userspace.S
+ *
+ * the entry stub clobbers EDX and ECX on IAMCU systems
  */
 
+static inline u32_t _arch_syscall_invoke6(u32_t arg1, u32_t arg2, u32_t arg3,
+					  u32_t arg4, u32_t arg5, u32_t arg6,
+					  u32_t call_id)
+{
+	u32_t ret;
+
+	__asm__ volatile("push %%ebp\n\t"
+			 "mov %[arg6], %%ebp\n\t"
+			 "int $0x80\n\t"
+			 "pop %%ebp\n\t"
+			 : "=a" (ret)
+#ifdef CONFIG_X86_IAMCU
+			   , "=d" (arg2), "=c" (arg3)
+#endif
+			 : "S" (call_id), "a" (arg1), "d" (arg2),
+			   "c" (arg3), "b" (arg4), "D" (arg5),
+			   [arg6] "m" (arg6)
+			 : "memory");
+	return ret;
+}
+
+static inline u32_t _arch_syscall_invoke5(u32_t arg1, u32_t arg2, u32_t arg3,
+					  u32_t arg4, u32_t arg5, u32_t call_id)
+{
+	u32_t ret;
+
+	__asm__ volatile("int $0x80"
+			 : "=a" (ret)
+#ifdef CONFIG_X86_IAMCU
+			   , "=d" (arg2), "=c" (arg3)
+#endif
+			 : "S" (call_id), "a" (arg1), "d" (arg2),
+			   "c" (arg3), "b" (arg4), "D" (arg5)
+			 : "memory");
+	return ret;
+}
+
+static inline u32_t _arch_syscall_invoke4(u32_t arg1, u32_t arg2, u32_t arg3,
+					  u32_t arg4, u32_t call_id)
+{
+	u32_t ret;
+
+	__asm__ volatile("int $0x80"
+			 : "=a" (ret)
+#ifdef CONFIG_X86_IAMCU
+			   , "=d" (arg2), "=c" (arg3)
+#endif
+			 : "S" (call_id), "a" (arg1), "d" (arg2), "c" (arg3),
+			   "b" (arg4)
+			 : "memory");
+	return ret;
+}
+
+static inline u32_t _arch_syscall_invoke3(u32_t arg1, u32_t arg2, u32_t arg3,
+					  u32_t call_id)
+{
+	u32_t ret;
+
+	__asm__ volatile("int $0x80"
+			 : "=a" (ret)
+#ifdef CONFIG_X86_IAMCU
+			   , "=d" (arg2), "=c" (arg3)
+#endif
+			 : "S" (call_id), "a" (arg1), "d" (arg2), "c" (arg3)
+			 : "memory");
+	return ret;
+}
+
+static inline u32_t _arch_syscall_invoke2(u32_t arg1, u32_t arg2, u32_t call_id)
+{
+	u32_t ret;
+
+	__asm__ volatile("int $0x80"
+			 : "=a" (ret)
+#ifdef CONFIG_X86_IAMCU
+			   , "=d" (arg2)
+#endif
+			 : "S" (call_id), "a" (arg1), "d" (arg2)
+			 : "memory"
+#ifdef CONFIG_X86_IAMCU
+			 , "ecx"
+#endif
+			 );
+	return ret;
+}
+
+static inline u32_t _arch_syscall_invoke1(u32_t arg1, u32_t call_id)
+{
+	u32_t ret;
+
+	__asm__ volatile("int $0x80"
+			 : "=a" (ret)
+			 : "S" (call_id), "a" (arg1)
+			 : "memory"
+#ifdef CONFIG_X86_IAMCU
+			 , "edx", "ecx"
+#endif
+			 );
+	return ret;
+}
+
+static inline u32_t _arch_syscall_invoke0(u32_t call_id)
+{
+	u32_t ret;
+
+	__asm__ volatile("int $0x80"
+			 : "=a" (ret)
+			 : "S" (call_id)
+			 : "memory"
+#ifdef CONFIG_X86_IAMCU
+			 , "edx", "ecx"
+#endif
+			 );
+	return ret;
+}
+
+static inline int _arch_is_user_context(void)
+{
+	int cs;
+
+	/* On x86, read the CS register (which cannot be manually set) */
+	__asm__ volatile ("mov %%cs, %[cs_val]" : [cs_val] "=r" (cs));
+
+	return cs == USER_CODE_SEG;
+}
+
+/* With userspace enabled, stacks are arranged as follows:
+ *
+ * High memory addresses
+ * +---------------+
+ * | Thread stack  |
+ * +---------------+
+ * | Kernel stack  |
+ * +---------------+
+ * | Guard page    |
+ * +---------------+
+ * Low Memory addresses
+ *
+ * Kernel stacks are fixed at 4K. All the pages containing the thread stack
+ * are marked as user-accessible.
+ * All threads start in supervisor mode, and the kernel stack/guard page
+ * are both marked non-present in the MMU.
+ * If a thread drops down to user mode, the kernel stack page will be marked
+ * as present, supervior-only, and the _main_tss.esp0 field updated to point
+ * to the top of it.
+ * All context switches will save/restore the esp0 field in the TSS.
+ */
+#define _STACK_GUARD_SIZE	(MMU_PAGE_SIZE * 2)
+#else /* !CONFIG_X86_USERSPACE */
+#define _STACK_GUARD_SIZE	MMU_PAGE_SIZE
+#endif /* CONFIG_X86_USERSPACE */
+#define _STACK_BASE_ALIGN	MMU_PAGE_SIZE
+#else /* !CONFIG_X86_STACK_PROTECTION */
+#define _STACK_GUARD_SIZE	0
+#define _STACK_BASE_ALIGN	STACK_ALIGN
+#endif /* CONFIG_X86_STACK_PROTECTION */
+
 #define _ARCH_THREAD_STACK_DEFINE(sym, size) \
-	struct _k_thread_stack_element _GENERIC_SECTION(.stacks) \
+	struct _k_thread_stack_element __noinit \
 		__aligned(_STACK_BASE_ALIGN) \
 		sym[(size) + _STACK_GUARD_SIZE]
 
 #define _ARCH_THREAD_STACK_ARRAY_DEFINE(sym, nmemb, size) \
-	struct _k_thread_stack_element _GENERIC_SECTION(.stacks) \
+	struct _k_thread_stack_element __noinit \
 		__aligned(_STACK_BASE_ALIGN) \
 		sym[nmemb][ROUND_UP(size, _STACK_BASE_ALIGN) + \
 			   _STACK_GUARD_SIZE]
@@ -616,22 +787,6 @@ void _x86_mmu_get_flags(void *addr, u32_t *pde_flags, u32_t *pte_flags);
  *	 modify
  */
 void _x86_mmu_set_flags(void *ptr, size_t size, u32_t flags, u32_t mask);
-
-/**
- * @brief check page table entry flags
- *
- * This routine checks if the buffer is available to whoever calls
- * this API.
- * @param addr start address of the buffer
- * @param size the size of the buffer
- * @param flags permissions to check.
- *    Consists of 2 bits the bit0 represents the RW permissions
- *    The bit1 represents the user/supervisor permissions
- *    Use macro BUFF_READABLE/BUFF_WRITEABLE or BUFF_USER to build the flags
- *
- * @return true-if the permissions of the pde matches the request
- */
-int _x86_mmu_buffer_validate(void *addr, size_t size, int flags);
 #endif /* CONFIG_X86_MMU */
 
 #endif /* !_ASMLANGUAGE */
