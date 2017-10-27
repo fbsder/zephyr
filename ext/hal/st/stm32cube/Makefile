@@ -14,7 +14,13 @@ STM32CUBE_CPU = $(shell echo $(CONFIG_SOC) | tr '[a-wyz]' '[A-WYZ]')
 # It also requires USE_HAL_DRIVER to be define in order to benefit from
 # STM32Cube HAL and LL APIs
 
-KBUILD_CFLAGS += -D$(STM32CUBE_CPU) -DUSE_HAL_DRIVER
+KBUILD_CFLAGS += -D$(STM32CUBE_CPU) -DUSE_HAL_DRIVER -DUSE_FULL_LL_DRIVER
+
+ifdef CONFIG_SOC_SERIES_STM32F0X
+ZEPHYRINCLUDE += -I$(srctree)/ext/hal/st/stm32cube/stm32f0xx/soc/
+ZEPHYRINCLUDE += -I$(srctree)/ext/hal/st/stm32cube/stm32f0xx/drivers/include/
+ZEPHYRINCLUDE += -I$(srctree)/ext/hal/st/stm32cube/stm32f0xx/drivers/include/Legacy/
+endif
 
 ifdef CONFIG_SOC_SERIES_STM32F1X
 ZEPHYRINCLUDE += -I$(srctree)/ext/hal/st/stm32cube/stm32f1xx/soc/

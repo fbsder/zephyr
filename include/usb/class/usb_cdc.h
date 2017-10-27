@@ -9,7 +9,7 @@
 
 /**
  * @file
- * @brief USB Communicatons Device Class (CDC) public header
+ * @brief USB Communications Device Class (CDC) public header
  *
  * Header follows the Class Definitions for
  * Communications Devices Specification (CDC120-20101103-track.pdf),
@@ -30,9 +30,11 @@
 /** Communications Class Subclass Codes */
 #define ACM_SUBCLASS			0x02
 #define ECM_SUBCLASS			0x06
+#define EEM_SUBCLASS			0x0c
 
 /** Communications Class Protocol Codes */
 #define AT_CMD_V250_PROTOCOL		0x01
+#define EEM_PROTOCOL			0x07
 
 /**
  * @brief Data Class Interface Codes

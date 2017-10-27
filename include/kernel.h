@@ -142,6 +142,7 @@ enum k_objects {
 	K_OBJ_STACK,
 	K_OBJ_THREAD,
 	K_OBJ_TIMER,
+	K_OBJ__THREAD_STACK_ELEMENT,
 
 	/* Driver subsystems */
 	K_OBJ_DRIVER_ADC,
@@ -174,12 +175,40 @@ enum k_objects {
  * _k_object_find() */
 struct _k_object {
 	char *name;
-	char perms[CONFIG_MAX_THREAD_BYTES];
-	char type;
-	char flags;
+	u8_t perms[CONFIG_MAX_THREAD_BYTES];
+	u8_t type;
+	u8_t flags;
+	u32_t data;
 } __packed;
 
+struct _k_object_assignment {
+	struct k_thread *thread;
+	void * const *objects;
+};
+
+/**
+ * @brief Grant a static thread access to a list of kernel objects
+ *
+ * For threads declared with K_THREAD_DEFINE(), grant the thread access to
+ * a set of kernel objects. These objects do not need to be in an initialized
+ * state. The permissions will be granted when the threads are initialized
+ * in the early boot sequence.
+ *
+ * All arguments beyond the first must be pointers to kernel objects.
+ *
+ * @param name_ Name of the thread, as passed to K_THREAD_DEFINE()
+ */
+#define K_THREAD_ACCESS_GRANT(name_, ...) \
+	static void * const _CONCAT(_object_list_, name_)[] = \
+		{ __VA_ARGS__, NULL }; \
+	static __used __in_section_unique(object_access) \
+		const struct _k_object_assignment \
+		_CONCAT(_object_access_, name_) = \
+			{ (&_k_thread_obj_ ## name_), \
+			  (_CONCAT(_object_list_, name_)) }
+
 #define K_OBJ_FLAG_INITIALIZED	BIT(0)
+#define K_OBJ_FLAG_PUBLIC	BIT(1)
 
 /**
  * Lookup a kernel object and init its metadata if it exists
@@ -192,6 +221,9 @@ struct _k_object {
  */
 void _k_object_init(void *obj);
 #else
+
+#define K_THREAD_ACCESS_GRANT(thread, ...)
+
 static inline void _k_object_init(void *obj)
 {
 	ARG_UNUSED(obj);
@@ -211,7 +243,7 @@ static inline void _impl_k_object_access_revoke(void *object,
 	ARG_UNUSED(thread);
 }
 
-static inline void _impl_k_object_access_all_grant(void *object)
+static inline void k_object_access_all_grant(void *object)
 {
 	ARG_UNUSED(object);
 }
@@ -253,9 +285,32 @@ __syscall void k_object_access_revoke(void *object, struct k_thread *thread);
  * as it is possible for such code to derive the addresses of kernel objects
  * and perform unwanted operations on them.
  *
+ * It is not possible to revoke permissions on public objects; once public,
+ * any thread may use it.
+ *
  * @param object Address of kernel object
  */
-__syscall void k_object_access_all_grant(void *object);
+void k_object_access_all_grant(void *object);
+
+/* Using typedef deliberately here, this is quite intended to be an opaque
+ * type. K_THREAD_STACK_BUFFER() should be used to access the data within.
+ *
+ * The purpose of this data type is to clearly distinguish between the
+ * declared symbol for a stack (of type k_thread_stack_t) and the underlying
+ * buffer which composes the stack data actually used by the underlying
+ * thread; they cannot be used interchangably as some arches precede the
+ * stack buffer region with guard areas that trigger a MPU or MMU fault
+ * if written to.
+ *
+ * APIs that want to work with the buffer inside should continue to use
+ * char *.
+ *
+ * Stacks should always be created with K_THREAD_STACK_DEFINE().
+ */
+struct __packed _k_thread_stack_element {
+	char data;
+};
+typedef struct _k_thread_stack_element k_thread_stack_t;
 
 /* timeouts */
 
@@ -418,6 +473,8 @@ struct k_thread {
 #if defined(CONFIG_USERSPACE)
 	/* memory domain info of the thread */
 	struct _mem_domain_info mem_domain_info;
+	/* Base address of thread stack */
+	k_thread_stack_t *stack_obj;
 #endif /* CONFIG_USERSPACE */
 
 	/* arch-specifics: must always be at the end */
@@ -507,28 +564,6 @@ extern void k_call_stacks_analyze(void);
 /* end - thread options */
 
 #if !defined(_ASMLANGUAGE)
-
-/* Using typedef deliberately here, this is quite intended to be an opaque
- * type. K_THREAD_STACK_BUFFER() should be used to access the data within.
- *
- * The purpose of this data type is to clearly distinguish between the
- * declared symbol for a stack (of type k_thread_stack_t) and the underlying
- * buffer which composes the stack data actually used by the underlying
- * thread; they cannot be used interchangably as some arches precede the
- * stack buffer region with guard areas that trigger a MPU or MMU fault
- * if written to.
- *
- * APIs that want to work with the buffer inside should continue to use
- * char *.
- *
- * Stacks should always be created with K_THREAD_STACK_DEFINE().
- */
-struct __packed _k_thread_stack_element {
-	char data;
-};
-typedef struct _k_thread_stack_element *k_thread_stack_t;
-
-
 /**
  * @brief Create a thread.
  *
@@ -561,12 +596,12 @@ typedef struct _k_thread_stack_element *k_thread_stack_t;
  *
  * @return ID of new thread.
  */
-extern k_tid_t k_thread_create(struct k_thread *new_thread,
-			       k_thread_stack_t stack,
-			       size_t stack_size,
-			       k_thread_entry_t entry,
-			       void *p1, void *p2, void *p3,
-			       int prio, u32_t options, s32_t delay);
+__syscall k_tid_t k_thread_create(struct k_thread *new_thread,
+				  k_thread_stack_t *stack,
+				  size_t stack_size,
+				  k_thread_entry_t entry,
+				  void *p1, void *p2, void *p3,
+				  int prio, u32_t options, s32_t delay);
 
 /**
  * @brief Drop a thread's privileges permanently to user mode
@@ -579,6 +614,22 @@ extern k_tid_t k_thread_create(struct k_thread *new_thread,
 extern FUNC_NORETURN void k_thread_user_mode_enter(k_thread_entry_t entry,
 						   void *p1, void *p2,
 						   void *p3);
+
+/**
+ * @brief Grant a thread access to a NULL-terminated  set of kernel objects
+ *
+ * This is a convenience function. For the provided thread, grant access to
+ * the remaining arguments, which must be pointers to kernel objects.
+ * The final argument must be a NULL.
+ *
+ * The thread object must be initialized (i.e. running). The objects don't
+ * need to be.
+ *
+ * @param thread Thread to grant access to objects
+ * @param ... NULL-terminated list of kernel object pointers
+ */
+extern void __attribute__((sentinel))
+	k_thread_access_grant(struct k_thread *thread, ...);
 
 /**
  * @brief Put the current thread to sleep.
@@ -686,7 +737,7 @@ __syscall void k_thread_start(k_tid_t thread);
 
 struct _static_thread_data {
 	struct k_thread *init_thread;
-	k_thread_stack_t init_stack;
+	k_thread_stack_t *init_stack;
 	unsigned int init_stack_size;
 	k_thread_entry_t init_entry;
 	void *init_p1;
@@ -2238,7 +2289,7 @@ static inline int k_work_pending(struct k_work *work)
  * @return N/A
  */
 extern void k_work_q_start(struct k_work_q *work_q,
-			   k_thread_stack_t stack,
+			   k_thread_stack_t *stack,
 			   size_t stack_size, int prio);
 
 /**
@@ -4025,13 +4076,24 @@ extern void _timer_expiration_handler(struct _timeout *t);
  * for properly declaring stacks, compatible with MMU/MPU constraints if
  * enabled
  */
+
+/**
+ * @brief Obtain an extern reference to a stack
+ *
+ * This macro properly brings the symbol of a thread stack declared
+ * elsewhere into scope.
+ *
+ * @param sym Thread stack symbol name
+ */
+#define K_THREAD_STACK_EXTERN(sym) extern k_thread_stack_t sym[]
+
 #ifdef _ARCH_THREAD_STACK_DEFINE
 #define K_THREAD_STACK_DEFINE(sym, size) _ARCH_THREAD_STACK_DEFINE(sym, size)
 #define K_THREAD_STACK_ARRAY_DEFINE(sym, nmemb, size) \
 		_ARCH_THREAD_STACK_ARRAY_DEFINE(sym, nmemb, size)
 #define K_THREAD_STACK_MEMBER(sym, size) _ARCH_THREAD_STACK_MEMBER(sym, size)
 #define K_THREAD_STACK_SIZEOF(sym) _ARCH_THREAD_STACK_SIZEOF(sym)
-static inline char *K_THREAD_STACK_BUFFER(k_thread_stack_t sym)
+static inline char *K_THREAD_STACK_BUFFER(k_thread_stack_t *sym)
 {
 	return _ARCH_THREAD_STACK_BUFFER(sym);
 }
@@ -4123,7 +4185,7 @@ static inline char *K_THREAD_STACK_BUFFER(k_thread_stack_t sym)
  * @param sym Declared stack symbol name
  * @return The buffer itself, a char *
  */
-static inline char *K_THREAD_STACK_BUFFER(k_thread_stack_t sym)
+static inline char *K_THREAD_STACK_BUFFER(k_thread_stack_t *sym)
 {
 	return (char *)sym;
 }

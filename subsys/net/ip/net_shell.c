@@ -1009,15 +1009,27 @@ static void net_app_cb(struct net_app_ctx *ctx, void *user_data)
 
 #if defined(CONFIG_NET_APP_SERVER)
 #if defined(CONFIG_NET_TCP)
-	if (ctx->server.net_ctx) {
-		get_addresses(ctx->server.net_ctx,
-			      addr_local, sizeof(addr_local),
-			      addr_remote, sizeof(addr_remote));
+	{
+		int i, found = 0;
 
-		printk("     Active: %16s <- %16s\n",
-		       addr_local, addr_remote);
-	} else {
-		printk("     No active connections to this server.\n");
+		for (i = 0; i < CONFIG_NET_APP_SERVER_NUM_CONN; i++) {
+			if (!ctx->server.net_ctxs[i] ||
+			    !net_context_is_used(ctx->server.net_ctxs[i])) {
+				continue;
+			}
+
+			get_addresses(ctx->server.net_ctxs[i],
+				      addr_local, sizeof(addr_local),
+				      addr_remote, sizeof(addr_remote));
+
+			printk("     Active: %16s <- %16s\n",
+			       addr_local, addr_remote);
+			found++;
+		}
+
+		if (!found) {
+			printk("     No active connections to this server.\n");
+		}
 	}
 #else
 	printk("     TCP not enabled for this server.\n");
@@ -1091,13 +1103,25 @@ static void arp_cb(struct arp_entry *entry, void *user_data)
 int net_shell_cmd_arp(int argc, char *argv[])
 {
 	ARG_UNUSED(argc);
-	ARG_UNUSED(argv);
 
 #if defined(CONFIG_NET_ARP)
-	int count = 0;
+	int arg = 1;
 
-	if (net_arp_foreach(arp_cb, &count) == 0) {
-		printk("ARP cache is empty.\n");
+	if (!argv[arg]) {
+		/* ARP cache content */
+		int count = 0;
+
+		if (net_arp_foreach(arp_cb, &count) == 0) {
+			printk("ARP cache is empty.\n");
+		}
+
+		return 0;
+	}
+
+	if (strcmp(argv[arg], "flush") == 0) {
+		printk("Flushing ARP cache.\n");
+		net_arp_clear_cache();
+		return 0;
 	}
 #else
 	printk("Enable CONFIG_NET_ARP, CONFIG_NET_IPV4 and "
@@ -1442,6 +1466,10 @@ int net_shell_cmd_iface(int argc, char *argv[])
 	ARG_UNUSED(argc);
 	ARG_UNUSED(argv);
 
+#if defined(CONFIG_NET_HOSTNAME_ENABLE)
+	printk("Hostname: %s\n\n", net_hostname_get());
+#endif
+
 	net_if_foreach(iface_cb, NULL);
 
 	return 0;
@@ -1542,8 +1570,8 @@ int net_shell_cmd_mem(int argc, char *argv[])
 
 	printk("Network buffer pools:\n");
 
-#if defined(CONFIG_NET_DEBUG_NET_PKT)
-	printk("Address\t\tSize\tCount\tAvail\tName\n");
+#if defined(CONFIG_NET_BUF_POOL_USAGE)
+	printk("Address\t\tSize\tTotal\tAvail\tName\n");
 
 	printk("%p\t%zu\t%d\t%u\tRX\n",
 	       rx, rx->num_blocks * rx->block_size,
@@ -1561,13 +1589,14 @@ int net_shell_cmd_mem(int argc, char *argv[])
 	       tx_data, tx_data->pool_size, tx_data->buf_count,
 	       tx_data->avail_count, tx_data->name);
 #else
-	printk("Address\t\tCount\tName\n");
+	printk("(CONFIG_NET_BUF_POOL_USAGE to see free #s)\n");
+	printk("Address\t\tTotal\tName\n");
 
 	printk("%p\t%d\tRX\n", rx, rx->num_blocks);
 	printk("%p\t%d\tTX\n", tx, tx->num_blocks);
 	printk("%p\t%d\tRX DATA\n", rx_data, rx_data->buf_count);
 	printk("%p\t%d\tTX DATA\n", tx_data, tx_data->buf_count);
-#endif /* CONFIG_NET_DEBUG_NET_PKT */
+#endif /* CONFIG_NET_BUF_POOL_USAGE */
 
 	if (IS_ENABLED(CONFIG_NET_CONTEXT_NET_PKT_POOL)) {
 		struct ctx_info info;
@@ -2080,6 +2109,8 @@ int net_shell_cmd_rpl(int argc, char *argv[])
 #if defined(CONFIG_INIT_STACKS)
 extern K_THREAD_STACK_DEFINE(_main_stack, CONFIG_MAIN_STACK_SIZE);
 extern K_THREAD_STACK_DEFINE(_interrupt_stack, CONFIG_ISR_STACK_SIZE);
+extern K_THREAD_STACK_DEFINE(sys_work_q_stack,
+			     CONFIG_SYSTEM_WORKQUEUE_STACK_SIZE);
 #endif
 
 int net_shell_cmd_stacks(int argc, char *argv[])
@@ -2126,6 +2157,19 @@ int net_shell_cmd_stacks(int argc, char *argv[])
 	       "ISR", "_interrupt_stack", CONFIG_ISR_STACK_SIZE,
 	       CONFIG_ISR_STACK_SIZE, unused,
 	       CONFIG_ISR_STACK_SIZE - unused, CONFIG_ISR_STACK_SIZE, pcnt);
+
+	net_analyze_stack_get_values(K_THREAD_STACK_BUFFER(sys_work_q_stack),
+				     K_THREAD_STACK_SIZEOF(sys_work_q_stack),
+				     &pcnt, &unused);
+	printk("%s [%s] stack size %d/%d bytes unused %u usage"
+	       " %d/%d (%u %%)\n",
+	       "WORKQ", "system workqueue",
+	       CONFIG_SYSTEM_WORKQUEUE_STACK_SIZE,
+	       CONFIG_SYSTEM_WORKQUEUE_STACK_SIZE, unused,
+	       CONFIG_SYSTEM_WORKQUEUE_STACK_SIZE - unused,
+	       CONFIG_SYSTEM_WORKQUEUE_STACK_SIZE, pcnt);
+#else
+	printk("Enable CONFIG_INIT_STACKS to see usage information.\n");
 #endif
 
 	return 0;
@@ -2448,7 +2492,8 @@ static struct shell_cmd net_commands[] = {
 	{ "app", net_shell_cmd_app,
 		"\n\tPrint network application API usage information" },
 	{ "arp", net_shell_cmd_arp,
-		"\n\tPrint information about IPv4 ARP cache" },
+		"\n\tPrint information about IPv4 ARP cache\n"
+		"arp flush\n\tRemove all entries from ARP cache" },
 	{ "conn", net_shell_cmd_conn,
 		"\n\tPrint information about network connections" },
 	{ "dns", net_shell_cmd_dns, "\n\tShow how DNS is configure\n"

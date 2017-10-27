@@ -64,6 +64,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <inttypes.h>
+#include <ctype.h>
 
 #include "lwm2m_object.h"
 #include "lwm2m_rw_json.h"
@@ -73,10 +74,9 @@
 #define T_NONE		0
 #define T_STRING_B	1
 #define T_STRING	2
-#define T_NAME		4
-#define T_VNUM		5
-#define T_OBJ		6
-#define T_VAL		7
+#define T_NAME		3
+#define T_OBJ		4
+#define T_VAL		5
 
 #define SEPARATOR(f)	((f & WRITER_OUTPUT_VALUE) ? "," : "")
 
@@ -85,6 +85,13 @@
 #define MODE_INSTANCE  1
 #define MODE_VALUE     2
 #define MODE_READY     3
+
+struct json_data {
+	u8_t *name;
+	u8_t *value;
+	u8_t name_len;
+	u8_t value_len;
+};
 
 /* Simlified JSON style reader for reading in values from a LWM2M JSON string */
 int json_next_token(struct lwm2m_input_context *in, struct json_data *json)
@@ -194,7 +201,7 @@ static size_t put_begin(struct lwm2m_output_context *out,
 {
 	int len;
 
-	len = snprintf(&out->outbuf[out->outlen],
+	len = snprintk(&out->outbuf[out->outlen],
 		       out->outsize - out->outlen,
 		       "{\"bn\":\"/%u/%u/\",\"e\":[",
 		       path->obj_id, path->obj_inst_id);
@@ -212,7 +219,7 @@ static size_t put_end(struct lwm2m_output_context *out,
 {
 	int len;
 
-	len = snprintf(&out->outbuf[out->outlen],
+	len = snprintk(&out->outbuf[out->outlen],
 		       out->outsize - out->outlen, "]}");
 	if (len < 0 || len >= (out->outsize - out->outlen)) {
 		return 0;
@@ -248,10 +255,10 @@ static size_t put_s32(struct lwm2m_output_context *out,
 	outlen = out->outsize - out->outlen;
 	sep = SEPARATOR(out->writer_flags);
 	if (out->writer_flags & WRITER_RESOURCE_INSTANCE) {
-		len = snprintf(outbuf, outlen, "%s{\"n\":\"%u/%u\",\"v\":%d}",
+		len = snprintk(outbuf, outlen, "%s{\"n\":\"%u/%u\",\"v\":%d}",
 			       sep, path->res_id, path->res_inst_id, value);
 	} else {
-		len = snprintf(outbuf, outlen, "%s{\"n\":\"%u\",\"v\":%d}",
+		len = snprintk(outbuf, outlen, "%s{\"n\":\"%u\",\"v\":%d}",
 			       sep, path->res_id, value);
 	}
 
@@ -289,10 +296,10 @@ static size_t put_s64(struct lwm2m_output_context *out,
 	outlen = out->outsize - out->outlen;
 	sep = SEPARATOR(out->writer_flags);
 	if (out->writer_flags & WRITER_RESOURCE_INSTANCE) {
-		len = snprintf(outbuf, outlen, "%s{\"n\":\"%u/%u\",\"v\":%lld}",
+		len = snprintk(outbuf, outlen, "%s{\"n\":\"%u/%u\",\"v\":%lld}",
 			       sep, path->res_id, path->res_inst_id, value);
 	} else {
-		len = snprintf(outbuf, outlen, "%s{\"n\":\"%u\",\"v\":%lld}",
+		len = snprintk(outbuf, outlen, "%s{\"n\":\"%u\",\"v\":%lld}",
 			       sep, path->res_id, value);
 	}
 
@@ -308,7 +315,7 @@ static size_t put_s64(struct lwm2m_output_context *out,
 
 static size_t put_string(struct lwm2m_output_context *out,
 			 struct lwm2m_obj_path *path,
-			 const char *value, size_t strlen)
+			 char *buf, size_t buflen)
 {
 	u8_t *outbuf;
 	size_t outlen;
@@ -321,10 +328,10 @@ static size_t put_string(struct lwm2m_output_context *out,
 	outlen = out->outsize - out->outlen;
 	sep = SEPARATOR(out->writer_flags);
 	if (out->writer_flags & WRITER_RESOURCE_INSTANCE) {
-		res = snprintf(outbuf, outlen, "%s{\"n\":\"%u/%u\",\"sv\":\"",
+		res = snprintk(outbuf, outlen, "%s{\"n\":\"%u/%u\",\"sv\":\"",
 			       sep, path->res_id, path->res_inst_id);
 	} else {
-		res = snprintf(outbuf, outlen, "%s{\"n\":\"%u\",\"sv\":\"",
+		res = snprintk(outbuf, outlen, "%s{\"n\":\"%u\",\"sv\":\"",
 			       sep, path->res_id);
 	}
 
@@ -333,12 +340,12 @@ static size_t put_string(struct lwm2m_output_context *out,
 	}
 
 	len += res;
-	for (i = 0; i < strlen && len < outlen; ++i) {
+	for (i = 0; i < buflen && len < outlen; ++i) {
 		/* Escape special characters */
 		/* TODO: Handle UTF-8 strings */
-		if (value[i] < '\x20') {
-			res = snprintf(&outbuf[len], outlen - len, "\\x%x",
-				       value[i]);
+		if (buf[i] < '\x20') {
+			res = snprintk(&outbuf[len], outlen - len, "\\x%x",
+				       buf[i]);
 
 			if (res < 0 || res >= (outlen - len)) {
 				return 0;
@@ -346,7 +353,7 @@ static size_t put_string(struct lwm2m_output_context *out,
 
 			len += res;
 			continue;
-		} else if (value[i] == '"' || value[i] == '\\') {
+		} else if (buf[i] == '"' || buf[i] == '\\') {
 			outbuf[len] = '\\';
 			++len;
 			if (len >= outlen) {
@@ -354,14 +361,14 @@ static size_t put_string(struct lwm2m_output_context *out,
 			}
 		}
 
-		outbuf[len] = value[i];
+		outbuf[len] = buf[i];
 		++len;
 		if (len >= outlen) {
 			return 0;
 		}
 	}
 
-	res = snprintf(&outbuf[len], outlen - len, "\"}");
+	res = snprintk(&outbuf[len], outlen - len, "\"}");
 	if (res < 0 || res >= (outlen - len)) {
 		return 0;
 	}
@@ -387,10 +394,10 @@ static size_t put_float32fix(struct lwm2m_output_context *out,
 	outlen = out->outsize - out->outlen;
 	sep = SEPARATOR(out->writer_flags);
 	if (out->writer_flags & WRITER_RESOURCE_INSTANCE) {
-		res = snprintf(outbuf, outlen, "%s{\"n\":\"%u/%u\",\"v\":",
+		res = snprintk(outbuf, outlen, "%s{\"n\":\"%u/%u\",\"v\":",
 			       sep, path->res_id, path->res_inst_id);
 	} else {
-		res = snprintf(outbuf, outlen, "%s{\"n\":\"%u\",\"v\":",
+		res = snprintk(outbuf, outlen, "%s{\"n\":\"%u\",\"v\":",
 			       sep, path->res_id);
 	}
 
@@ -407,7 +414,7 @@ static size_t put_float32fix(struct lwm2m_output_context *out,
 
 	len += res;
 	outlen -= res;
-	res = snprintf(&outbuf[len], outlen, "}");
+	res = snprintk(&outbuf[len], outlen, "}");
 	if (res <= 0 || res >= outlen) {
 		return 0;
 	}
@@ -432,10 +439,10 @@ static size_t put_float64fix(struct lwm2m_output_context *out,
 	outlen = out->outsize - out->outlen;
 	sep = SEPARATOR(out->writer_flags);
 	if (out->writer_flags & WRITER_RESOURCE_INSTANCE) {
-		res = snprintf(outbuf, outlen, "%s{\"n\":\"%u/%u\",\"v\":",
+		res = snprintk(outbuf, outlen, "%s{\"n\":\"%u/%u\",\"v\":",
 			       sep, path->res_id, path->res_inst_id);
 	} else {
-		res = snprintf(outbuf, outlen, "%s{\"n\":\"%u\",\"v\":",
+		res = snprintk(outbuf, outlen, "%s{\"n\":\"%u\",\"v\":",
 			       sep, path->res_id);
 	}
 
@@ -452,7 +459,7 @@ static size_t put_float64fix(struct lwm2m_output_context *out,
 
 	len += res;
 	outlen -= res;
-	res = snprintf(&outbuf[len], outlen, "}");
+	res = snprintk(&outbuf[len], outlen, "}");
 	if (res <= 0 || res >= outlen) {
 		return 0;
 	}
@@ -476,11 +483,11 @@ static size_t put_bool(struct lwm2m_output_context *out,
 	outlen = out->outsize - out->outlen;
 	sep = SEPARATOR(out->writer_flags);
 	if (out->writer_flags & WRITER_RESOURCE_INSTANCE) {
-		len = snprintf(outbuf, outlen, "%s{\"n\":\"%u/%u\",\"bv\":%s}",
+		len = snprintk(outbuf, outlen, "%s{\"n\":\"%u/%u\",\"bv\":%s}",
 			       sep, path->res_id, path->res_inst_id,
 			       value ? "true" : "false");
 	} else {
-		len = snprintf(outbuf, outlen, "%s{\"n\":\"%u\",\"bv\":%s}",
+		len = snprintk(outbuf, outlen, "%s{\"n\":\"%u\",\"bv\":%s}",
 			       sep, path->res_id, value ? "true" : "false");
 	}
 
@@ -509,7 +516,7 @@ const struct lwm2m_writer json_writer = {
 	put_bool
 };
 
-static int parse_path(const u8_t *strpath, u16_t strlen,
+static int parse_path(const u8_t *buf, u16_t buflen,
 		      struct lwm2m_obj_path *path)
 {
 	int ret = 0;
@@ -519,18 +526,18 @@ static int parse_path(const u8_t *strpath, u16_t strlen,
 
 	do {
 		val = 0;
-		c = strpath[pos];
+		c = buf[pos];
 		/* we should get a value first - consume all numbers */
-		while (pos < strlen && c >= '0' && c <= '9') {
+		while (pos < buflen && isdigit(c)) {
 			val = val * 10 + (c - '0');
-			c = strpath[++pos];
+			c = buf[++pos];
 		}
 
 		/*
 		 * Slash will mote thing forward
 		 * and the end will be when pos == pl
 		 */
-		if (c == '/' || pos == strlen) {
+		if (c == '/' || pos == buflen) {
 			SYS_LOG_DBG("Setting %u = %u", ret, val);
 			if (ret == 0) {
 				path->obj_id = val;
@@ -547,7 +554,7 @@ static int parse_path(const u8_t *strpath, u16_t strlen,
 				    c, pos);
 			return -1;
 		}
-	} while (pos < strlen);
+	} while (pos < buflen);
 
 	return ret;
 }

@@ -40,12 +40,20 @@
 #include <stm32f4xx_ll_spi.h>
 #endif /* CONFIG_CLOCK_CONTROL_STM32_CUBE */
 
+#ifdef CONFIG_SERIAL_HAS_DRIVER
+#include <stm32f4xx_ll_usart.h>
+#endif
+
 #ifdef CONFIG_I2C
 #include <stm32f4xx_ll_i2c.h>
 #endif
 
 #ifdef CONFIG_RANDOM_STM32_RNG
 #include <stm32f4xx_ll_rng.h>
+#endif
+
+#ifdef CONFIG_IWDG_STM32
+#include <stm32f4xx_ll_iwdg.h>
 #endif
 
 /* For IMG_MANAGER */

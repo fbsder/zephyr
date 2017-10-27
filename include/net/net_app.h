@@ -307,11 +307,11 @@ struct net_app_ctx {
 #if defined(CONFIG_NET_APP_SERVER)
 	struct {
 #if defined(CONFIG_NET_TCP)
-		/** Currently active network context. This will contain the
-		 * new context that is created after connection is accepted
+		/** Currently active network contexts. This will contain the
+		 * new contexts that are created after connection is accepted
 		 * when TCP is enabled.
 		 */
-		struct net_context *net_ctx;
+		struct net_context *net_ctxs[CONFIG_NET_APP_SERVER_NUM_CONN];
 #endif
 	} server;
 #endif /* CONFIG_NET_APP_SERVER */
@@ -336,7 +336,7 @@ struct net_app_ctx {
 #if defined(CONFIG_NET_APP_TLS) || defined(CONFIG_NET_APP_DTLS)
 	struct {
 		/** TLS stack for mbedtls library. */
-		k_thread_stack_t stack;
+		k_thread_stack_t *stack;
 
 		/** TLS stack size. */
 		int stack_size;
@@ -388,6 +388,14 @@ struct net_app_ctx {
 
 		/** Have we called connect cb yet? */
 		bool connect_cb_called;
+
+		/** User wants to close the connection */
+		bool close_requested;
+
+		/** Is there TX pending? If there is then the close operation
+		 * will be postponed after we have sent the data.
+		 */
+		bool tx_pending;
 	} tls;
 #endif /* CONFIG_NET_APP_TLS || CONFIG_NET_APP_DTLS */
 
@@ -866,6 +874,17 @@ struct net_buf *net_app_get_net_buf(struct net_app_ctx *ctx,
 int net_app_close(struct net_app_ctx *ctx);
 
 /**
+ * @brief Close a specific network connection.
+ *
+ * @param ctx Network application context.
+ * @param net_ctx Network context.
+ *
+ * @return 0 if ok, <0 if error.
+ */
+int net_app_close2(struct net_app_ctx *ctx,
+		   struct net_context *net_ctx);
+
+/**
  * @brief Release this network application context.
  *
  * @details No network data will be received via this context after this
@@ -914,7 +933,7 @@ int net_app_client_tls(struct net_app_ctx *ctx,
 		       const char *cert_host,
 		       net_app_entropy_src_cb_t entropy_src_cb,
 		       struct k_mem_pool *pool,
-		       k_thread_stack_t stack,
+		       k_thread_stack_t *stack,
 		       size_t stack_size);
 #endif /* CONFIG_NET_APP_CLIENT */
 
@@ -950,7 +969,7 @@ int net_app_server_tls(struct net_app_ctx *ctx,
 		       net_app_cert_cb_t cert_cb,
 		       net_app_entropy_src_cb_t entropy_src_cb,
 		       struct k_mem_pool *pool,
-		       k_thread_stack_t stack,
+		       k_thread_stack_t *stack,
 		       size_t stack_len);
 
 #endif /* CONFIG_NET_APP_SERVER */

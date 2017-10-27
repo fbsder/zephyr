@@ -17,7 +17,7 @@ static struct _k_object *validate_any_object(void *obj)
 	/* This can be any kernel object and it doesn't have to be
 	 * initialized
 	 */
-	ret = _k_object_validate(ko, K_OBJ_ANY, 1);
+	ret = _k_object_validate(ko, K_OBJ_ANY, _OBJ_INIT_ANY);
 	if (ret) {
 #ifdef CONFIG_PRINTK
 		_dump_object_error(ret, obj, ko, K_OBJ_ANY);
@@ -35,7 +35,7 @@ static struct _k_object *validate_any_object(void *obj)
  * To avoid double _k_object_find() lookups, we don't call the implementation
  * function, but call a level deeper.
  */
-_SYSCALL_HANDLER2(k_object_access_grant, object, thread)
+_SYSCALL_HANDLER(k_object_access_grant, object, thread)
 {
 	struct _k_object *ko;
 
@@ -47,7 +47,7 @@ _SYSCALL_HANDLER2(k_object_access_grant, object, thread)
 	return 0;
 }
 
-_SYSCALL_HANDLER2(k_object_access_revoke, object, thread)
+_SYSCALL_HANDLER(k_object_access_revoke, object, thread)
 {
 	struct _k_object *ko;
 
@@ -55,17 +55,6 @@ _SYSCALL_HANDLER2(k_object_access_revoke, object, thread)
 	ko = validate_any_object((void *)object);
 	_SYSCALL_VERIFY_MSG(ko, "object %p access denied", (void *)object);
 	_thread_perms_clear(ko, (struct k_thread *)thread);
-
-	return 0;
-}
-
-_SYSCALL_HANDLER1(k_object_access_all_grant, object)
-{
-	struct _k_object *ko;
-
-	ko = validate_any_object((void *)object);
-	_SYSCALL_VERIFY_MSG(ko, "object %p access denied", (void *)object);
-	_thread_perms_all_set(ko);
 
 	return 0;
 }

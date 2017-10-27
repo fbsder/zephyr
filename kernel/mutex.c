@@ -14,7 +14,7 @@
  * priority thread waiting on the mutex.
  *
  * Each mutex that contributes to priority inheritance must be released in the
- * reverse order in which is was acquired.  Furthermore each subsequent mutex
+ * reverse order in which it was acquired.  Furthermore each subsequent mutex
  * that contributes to raising the owning thread's priority level must be
  * acquired at a point after the most recent "bumping" of the priority level.
  *
@@ -82,7 +82,7 @@ void _impl_k_mutex_init(struct k_mutex *mutex)
 }
 
 #ifdef CONFIG_USERSPACE
-_SYSCALL_HANDLER1(k_mutex_init, mutex)
+_SYSCALL_HANDLER(k_mutex_init, mutex)
 {
 	_SYSCALL_OBJ_INIT(mutex, K_OBJ_MUTEX);
 	_impl_k_mutex_init((struct k_mutex *)mutex);
@@ -146,12 +146,6 @@ int _impl_k_mutex_lock(struct k_mutex *mutex, s32_t timeout)
 		return -EBUSY;
 	}
 
-#if 0
-	if (_is_prio_higher(_current->prio, mutex->owner->prio)) {
-		new_prio = _current->prio;
-	}
-	new_prio = _get_new_prio_with_ceiling(new_prio);
-#endif
 	new_prio = new_prio_for_inheritance(_current->base.prio,
 					    mutex->owner->base.prio);
 
@@ -200,7 +194,7 @@ int _impl_k_mutex_lock(struct k_mutex *mutex, s32_t timeout)
 }
 
 #ifdef CONFIG_USERSPACE
-_SYSCALL_HANDLER2(k_mutex_lock, mutex, timeout)
+_SYSCALL_HANDLER(k_mutex_lock, mutex, timeout)
 {
 	_SYSCALL_OBJ(mutex, K_OBJ_MUTEX);
 	return _impl_k_mutex_lock((struct k_mutex *)mutex, (s32_t)timeout);

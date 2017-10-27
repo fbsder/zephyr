@@ -292,7 +292,8 @@ static int on_body(struct http_parser *parser, const char *at, size_t length)
 
 	NET_DBG("Processed %zd length %zd", ctx->rsp.processed, length);
 
-	if (!ctx->rsp.body_start) {
+	if ((u8_t *)at != (u8_t *)ctx->rsp.response_buf) {
+		/* This fragment contains the start of the body */
 		ctx->rsp.body_start = (u8_t *)at;
 	}
 
@@ -309,6 +310,7 @@ static int on_body(struct http_parser *parser, const char *at, size_t length)
 
 		/* Re-use the result buffer and start to fill it again */
 		ctx->rsp.data_len = 0;
+		ctx->rsp.body_start = NULL;
 	}
 
 	return 0;
@@ -1664,7 +1666,7 @@ int https_client_init(struct http_client_ctx *ctx,
 		      const char *cert_host,
 		      https_entropy_src_cb_t entropy_src_cb,
 		      struct k_mem_pool *pool,
-		      k_thread_stack_t https_stack,
+		      k_thread_stack_t *https_stack,
 		      size_t https_stack_size)
 {
 	int ret;

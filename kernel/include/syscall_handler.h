@@ -17,6 +17,12 @@
 
 extern const _k_syscall_handler_t _k_syscall_table[K_SYSCALL_LIMIT];
 
+enum _obj_init_check {
+	_OBJ_INIT_TRUE = 0,
+	_OBJ_INIT_FALSE = -1,
+	_OBJ_INIT_ANY = 1
+};
+
 /**
  * Ensure a system object is a valid object of the expected type
  *
@@ -31,14 +37,15 @@ extern const _k_syscall_handler_t _k_syscall_table[K_SYSCALL_LIMIT];
  * @param ko Kernel object metadata pointer, or NULL
  * @param otype Expected type of the kernel object, or K_OBJ_ANY if type
  *	  doesn't matter
- * @param init If true, this is for an init function and we will not error
- *	   out if the object is not initialized
+ * @param init Indicate whether the object needs to already be in initialized
+ *             or uninitialized state, or that we don't care
  * @return 0 If the object is valid
  *         -EBADF if not a valid object of the specified type
  *         -EPERM If the caller does not have permissions
  *         -EINVAL Object is not initialized
  */
-int _k_object_validate(struct _k_object *ko, enum k_objects otype, int init);
+int _k_object_validate(struct _k_object *ko, enum k_objects otype,
+		       enum _obj_init_check init);
 
 /**
  * Dump out error information on failed _k_object_validate() call
@@ -98,12 +105,25 @@ extern void _thread_perms_set(struct _k_object *ko, struct k_thread *thread);
  */
 extern void _thread_perms_clear(struct _k_object *ko, struct k_thread *thread);
 
-/**
- * Grant all current and future threads access to a kernel object
+/*
+ * Revoke access to all objects for the provided thread
  *
- * @param ko Kernel object metadata to update
+ * NOTE: Unlike _thread_perms_clear(), this function will not clear
+ * permissions on public objects.
+ *
+ * @param thread Thread object to revoke access
  */
-extern void _thread_perms_all_set(struct _k_object *ko);
+extern void _thread_perms_all_clear(struct k_thread *thread);
+
+/**
+ * Clear initialization state of a kernel object
+ *
+ * Intended for thread objects upon thread exit, or for other kernel objects
+ * that were released back to an object pool.
+ *
+ * @param object Address of the kernel object
+ */
+void _k_object_uninit(void *obj);
 
 /**
  * @brief Runtime expression check for system call arguments
@@ -216,54 +236,71 @@ extern void _thread_perms_all_set(struct _k_object *ko);
 #define _SYSCALL_MEMORY_ARRAY_WRITE(ptr, nmemb, size) \
 	_SYSCALL_MEMORY_ARRAY(ptr, nmemb, size, 1)
 
-static inline int _obj_validation_check(void *obj, enum k_objects otype,
-					int init)
+static inline int _obj_validation_check(struct _k_object *ko,
+					void *obj,
+					enum k_objects otype,
+					enum _obj_init_check init)
 {
-	struct _k_object *ko;
 	int ret;
 
-	ko = _k_object_find(obj);
 	ret = _k_object_validate(ko, otype, init);
 
 #ifdef CONFIG_PRINTK
 	if (ret) {
 		_dump_object_error(ret, obj, ko, otype);
 	}
+#else
+	ARG_UNUSED(obj);
 #endif
 
 	return ret;
 }
 
 #define _SYSCALL_IS_OBJ(ptr, type, init) \
-	_SYSCALL_VERIFY_MSG(!_obj_validation_check((void *)ptr, type, init), \
-			    "object %p access denied", (void *)(ptr))
+	_SYSCALL_VERIFY_MSG( \
+	    !_obj_validation_check(_k_object_find((void *)ptr), (void *)ptr, \
+				   type, init), "access denied")
 
 /**
  * @brief Runtime check kernel object pointer for non-init functions
  *
  * Calls _k_object_validate and triggers a kernel oops if the check files.
- * For use in system call handlers which are not init functions; a check
- * enforcing that an object is initialized* will not occur.
+ * For use in system call handlers which are not init functions; a fatal
+ * error will occur if the object is not initialized.
  *
  * @param ptr Untrusted kernel object pointer
  * @param type Expected kernel object type
  */
 #define _SYSCALL_OBJ(ptr, type) \
-	_SYSCALL_IS_OBJ(ptr, type, 0)
+	_SYSCALL_IS_OBJ(ptr, type, _OBJ_INIT_TRUE)
 
 /**
  * @brief Runtime check kernel object pointer for non-init functions
  *
- * See description of _SYSCALL_IS_OBJ. For use in system call handlers which
- * are not init functions; a check enforcing that an object is initialized
- * will not occur.
+ * See description of _SYSCALL_IS_OBJ. No initialization checks are done.
+ * Intended for init functions where objects may be re-initialized at will.
  *
  * @param ptr Untrusted kernel object pointer
  * @param type Expected kernel object type
  */
 
 #define _SYSCALL_OBJ_INIT(ptr, type) \
-	_SYSCALL_IS_OBJ(ptr, type, 1)
+	_SYSCALL_IS_OBJ(ptr, type, _OBJ_INIT_ANY)
+
+/**
+ * @brief Runtime check kernel object pointer for non-init functions
+ *
+ * See description of _SYSCALL_IS_OBJ. Triggers a fatal error if the object is
+ * initialized. Intended for init functions where objects, once initialized,
+ * can only be re-used when their initialization state expires due to some
+ * other mechanism.
+ *
+ * @param ptr Untrusted kernel object pointer
+ * @param type Expected kernel object type
+ */
+
+#define _SYSCALL_OBJ_NEVER_INIT(ptr, type) \
+	_SYSCALL_IS_OBJ(ptr, type, _OBJ_INIT_FALSE)
 
 /*
  * Handler definition macros
@@ -277,11 +314,12 @@ static inline int _obj_validation_check(void *obj, enum k_objects otype,
  * the bolierplate. The macros ensure that the seventh argument is named
  * "ssf" as this is now referenced by various other _SYSCALL macros.
  *
- * The different variants here simply depend on how many of the 6 arguments
- * passed in are really used.
+ * Use the _SYSCALL_HANDLER(name_, arg0, ..., arg6) variant, as it will
+ * automatically deduce the correct version of __SYSCALL_HANDLERn() to
+ * use depending on the number of arguments.
  */
 
-#define _SYSCALL_HANDLER0(name_) \
+#define __SYSCALL_HANDLER0(name_) \
 	u32_t _handler_ ## name_(u32_t arg1 __unused, \
 				 u32_t arg2 __unused, \
 				 u32_t arg3 __unused, \
@@ -290,7 +328,7 @@ static inline int _obj_validation_check(void *obj, enum k_objects otype,
 				 u32_t arg6 __unused, \
 				 void *ssf)
 
-#define _SYSCALL_HANDLER1(name_, arg1_) \
+#define __SYSCALL_HANDLER1(name_, arg1_) \
 	u32_t _handler_ ## name_(u32_t arg1_, \
 				 u32_t arg2 __unused, \
 				 u32_t arg3 __unused, \
@@ -299,7 +337,7 @@ static inline int _obj_validation_check(void *obj, enum k_objects otype,
 				 u32_t arg6 __unused, \
 				 void *ssf)
 
-#define _SYSCALL_HANDLER2(name_, arg1_, arg2_) \
+#define __SYSCALL_HANDLER2(name_, arg1_, arg2_) \
 	u32_t _handler_ ## name_(u32_t arg1_, \
 				 u32_t arg2_, \
 				 u32_t arg3 __unused, \
@@ -308,7 +346,7 @@ static inline int _obj_validation_check(void *obj, enum k_objects otype,
 				 u32_t arg6 __unused, \
 				 void *ssf)
 
-#define _SYSCALL_HANDLER3(name_, arg1_, arg2_, arg3_) \
+#define __SYSCALL_HANDLER3(name_, arg1_, arg2_, arg3_) \
 	u32_t _handler_ ## name_(u32_t arg1_, \
 				 u32_t arg2_, \
 				 u32_t arg3_, \
@@ -317,7 +355,7 @@ static inline int _obj_validation_check(void *obj, enum k_objects otype,
 				 u32_t arg6 __unused, \
 				 void *ssf)
 
-#define _SYSCALL_HANDLER4(name_, arg1_, arg2_, arg3_, arg4_) \
+#define __SYSCALL_HANDLER4(name_, arg1_, arg2_, arg3_, arg4_) \
 	u32_t _handler_ ## name_(u32_t arg1_, \
 				 u32_t arg2_, \
 				 u32_t arg3_, \
@@ -326,7 +364,7 @@ static inline int _obj_validation_check(void *obj, enum k_objects otype,
 				 u32_t arg6 __unused, \
 				 void *ssf)
 
-#define _SYSCALL_HANDLER5(name_, arg1_, arg2_, arg3_, arg4_, arg5_) \
+#define __SYSCALL_HANDLER5(name_, arg1_, arg2_, arg3_, arg4_, arg5_) \
 	u32_t _handler_ ## name_(u32_t arg1_, \
 				 u32_t arg2_, \
 				 u32_t arg3_, \
@@ -335,7 +373,7 @@ static inline int _obj_validation_check(void *obj, enum k_objects otype,
 				 u32_t arg6 __unused, \
 				 void *ssf)
 
-#define _SYSCALL_HANDLER6(name_, arg1_, arg2_, arg3_, arg4_, arg5_, arg6_) \
+#define __SYSCALL_HANDLER6(name_, arg1_, arg2_, arg3_, arg4_, arg5_, arg6_) \
 	u32_t _handler_ ## name_(u32_t arg1_, \
 				 u32_t arg2_, \
 				 u32_t arg3_, \
@@ -344,6 +382,19 @@ static inline int _obj_validation_check(void *obj, enum k_objects otype,
 				 u32_t arg6_, \
 				 void *ssf)
 
+#define _SYSCALL_CONCAT(arg1, arg2) __SYSCALL_CONCAT(arg1, arg2)
+#define __SYSCALL_CONCAT(arg1, arg2) ___SYSCALL_CONCAT(arg1, arg2)
+#define ___SYSCALL_CONCAT(arg1, arg2) arg1##arg2
+
+#define _SYSCALL_NARG(...) __SYSCALL_NARG(__VA_ARGS__, __SYSCALL_RSEQ_N())
+#define __SYSCALL_NARG(...) __SYSCALL_ARG_N(__VA_ARGS__)
+#define __SYSCALL_ARG_N(_1, _2, _3, _4, _5, _6, _7, N, ...) N
+#define __SYSCALL_RSEQ_N() 6, 5, 4, 3, 2, 1, 0
+
+#define _SYSCALL_HANDLER(...) \
+	_SYSCALL_CONCAT(__SYSCALL_HANDLER, \
+			_SYSCALL_NARG(__VA_ARGS__))(__VA_ARGS__)
+
 /*
  * Helper macros for a very common case: calls which just take one argument
  * which is an initialized kernel object of a specific type. Verify the object
@@ -351,25 +402,25 @@ static inline int _obj_validation_check(void *obj, enum k_objects otype,
  */
 
 #define _SYSCALL_HANDLER1_SIMPLE(name_, obj_enum_, obj_type_) \
-	_SYSCALL_HANDLER1(name_, arg1) { \
+	__SYSCALL_HANDLER1(name_, arg1) { \
 		_SYSCALL_OBJ(arg1, obj_enum_); \
 		return (u32_t)_impl_ ## name_((obj_type_)arg1); \
 	}
 
 #define _SYSCALL_HANDLER1_SIMPLE_VOID(name_, obj_enum_, obj_type_) \
-	_SYSCALL_HANDLER1(name_, arg1) { \
+	__SYSCALL_HANDLER1(name_, arg1) { \
 		_SYSCALL_OBJ(arg1, obj_enum_); \
 		_impl_ ## name_((obj_type_)arg1); \
 		return 0; \
 	}
 
 #define _SYSCALL_HANDLER0_SIMPLE(name_) \
-	_SYSCALL_HANDLER0(name_) { \
+	__SYSCALL_HANDLER0(name_) { \
 		return (u32_t)_impl_ ## name_(); \
 	}
 
 #define _SYSCALL_HANDLER0_SIMPLE_VOID(name_) \
-	_SYSCALL_HANDLER0(name_) { \
+	__SYSCALL_HANDLER0(name_) { \
 		_impl_ ## name_(); \
 		return 0; \
 	}

@@ -14,6 +14,8 @@
 #include <syscall.h>
 #include <syscall_handler.h>
 
+#define MAX_THREAD_BITS		(CONFIG_MAX_THREAD_BYTES * 8)
+
 const char *otype_to_str(enum k_objects otype)
 {
 	/* -fdata-sections doesn't work right except in very very recent
@@ -39,6 +41,8 @@ const char *otype_to_str(enum k_objects otype)
 		return "k_thread";
 	case K_OBJ_TIMER:
 		return "k_timer";
+	case K_OBJ__THREAD_STACK_ELEMENT:
+		return "k_thread_stack_t";
 
 	/* Driver subsystems */
 	case K_OBJ_DRIVER_ADC:
@@ -116,15 +120,15 @@ void _thread_perms_inherit(struct k_thread *parent, struct k_thread *child)
 		parent
 	};
 
-	if ((ctx.parent_id < 8 * CONFIG_MAX_THREAD_BYTES) &&
-	    (ctx.child_id < 8 * CONFIG_MAX_THREAD_BYTES)) {
+	if ((ctx.parent_id < MAX_THREAD_BITS) &&
+	    (ctx.child_id < MAX_THREAD_BITS)) {
 		_k_object_wordlist_foreach(wordlist_cb, &ctx);
 	}
 }
 
 void _thread_perms_set(struct _k_object *ko, struct k_thread *thread)
 {
-	if (thread->base.perm_index < 8 * CONFIG_MAX_THREAD_BYTES) {
+	if (thread->base.perm_index < MAX_THREAD_BITS) {
 		sys_bitfield_set_bit((mem_addr_t)&ko->perms,
 				     thread->base.perm_index);
 	}
@@ -132,24 +136,38 @@ void _thread_perms_set(struct _k_object *ko, struct k_thread *thread)
 
 void _thread_perms_clear(struct _k_object *ko, struct k_thread *thread)
 {
-	if (thread->base.perm_index < 8 * CONFIG_MAX_THREAD_BYTES) {
+	if (thread->base.perm_index < MAX_THREAD_BITS) {
 		sys_bitfield_clear_bit((mem_addr_t)&ko->perms,
 				       thread->base.perm_index);
 	}
 }
 
+static void clear_perms_cb(struct _k_object *ko, void *ctx_ptr)
+{
+	int id = (int)ctx_ptr;
+
+	sys_bitfield_clear_bit((mem_addr_t)&ko->perms, id);
+}
+
+void _thread_perms_all_clear(struct k_thread *thread)
+{
+	if (thread->base.perm_index < MAX_THREAD_BITS) {
+		_k_object_wordlist_foreach(clear_perms_cb,
+					   (void *)thread->base.perm_index);
+	}
+}
+
 static int thread_perms_test(struct _k_object *ko)
 {
-	if (_current->base.perm_index < 8 * CONFIG_MAX_THREAD_BYTES) {
+	if (ko->flags & K_OBJ_FLAG_PUBLIC) {
+		return 1;
+	}
+
+	if (_current->base.perm_index < MAX_THREAD_BITS) {
 		return sys_bitfield_test_bit((mem_addr_t)&ko->perms,
 					     _current->base.perm_index);
 	}
 	return 0;
-}
-
-void _thread_perms_all_set(struct _k_object *ko)
-{
-	memset(ko->perms, 0xFF, CONFIG_MAX_THREAD_BYTES);
 }
 
 static void dump_permission_error(struct _k_object *ko)
@@ -176,6 +194,8 @@ void _dump_object_error(int retval, void *obj, struct _k_object *ko,
 	case -EINVAL:
 		printk("%p used before initialization\n", obj);
 		break;
+	case -EADDRINUSE:
+		printk("%p %s in use\n", obj, otype_to_str(otype));
 	}
 }
 
@@ -197,33 +217,40 @@ void _impl_k_object_access_revoke(void *object, struct k_thread *thread)
 	}
 }
 
-void _impl_k_object_access_all_grant(void *object)
+void k_object_access_all_grant(void *object)
 {
 	struct _k_object *ko = _k_object_find(object);
 
 	if (ko) {
-		_thread_perms_all_set(ko);
+		ko->flags |= K_OBJ_FLAG_PUBLIC;
 	}
 }
 
-int _k_object_validate(struct _k_object *ko, enum k_objects otype, int init)
+int _k_object_validate(struct _k_object *ko, enum k_objects otype,
+		       enum _obj_init_check init)
 {
-	if (!ko || (otype != K_OBJ_ANY && ko->type != otype)) {
+	if (unlikely(!ko || (otype != K_OBJ_ANY && ko->type != otype))) {
 		return -EBADF;
 	}
 
 	/* Manipulation of any kernel objects by a user thread requires that
 	 * thread be granted access first, even for uninitialized objects
 	 */
-	if (!thread_perms_test(ko)) {
+	if (unlikely(!thread_perms_test(ko))) {
 		return -EPERM;
 	}
 
-	/* If we are not initializing an object, and the object is not
-	 * initialized, we should freak out
-	 */
-	if (!init && !(ko->flags & K_OBJ_FLAG_INITIALIZED)) {
-		return -EINVAL;
+	/* Initialization state checks. _OBJ_INIT_ANY, we don't care */
+	if (likely(init == _OBJ_INIT_TRUE)) {
+		/* Object MUST be intialized */
+		if (unlikely(!(ko->flags & K_OBJ_FLAG_INITIALIZED))) {
+			return -EINVAL;
+		}
+	} else if (init < _OBJ_INIT_TRUE) { /* _OBJ_INIT_FALSE case */
+		/* Object MUST NOT be initialized */
+		if (unlikely(ko->flags & K_OBJ_FLAG_INITIALIZED)) {
+			return -EADDRINUSE;
+		}
 	}
 
 	return 0;
@@ -250,14 +277,21 @@ void _k_object_init(void *object)
 		return;
 	}
 
-	/* Initializing an object implicitly grants access to the calling
-	 * thread and nobody else
-	 */
-	memset(ko->perms, 0, CONFIG_MAX_THREAD_BYTES);
-	_thread_perms_set(ko, _current);
-
 	/* Allows non-initialization system calls to be made on this object */
 	ko->flags |= K_OBJ_FLAG_INITIALIZED;
+}
+
+void _k_object_uninit(void *object)
+{
+	struct _k_object *ko;
+
+	/* See comments in _k_object_init() */
+	ko = _k_object_find(object);
+	if (!ko) {
+		return;
+	}
+
+	ko->flags &= ~K_OBJ_FLAG_INITIALIZED;
 }
 
 static u32_t _handler_bad_syscall(u32_t bad_id, u32_t arg2, u32_t arg3,
