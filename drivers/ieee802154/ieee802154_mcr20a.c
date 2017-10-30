@@ -49,9 +49,6 @@
 #define _MACACKWAITDURATION		(864 / 16) /* 864us * 62500Hz */
 #endif
 
-/* AUTOACK should be enabled by default, disable it only for testing */
-#define MCR20A_AUTOACK_ENABLED		(true)
-
 #define MCR20A_FCS_LENGTH		(2)
 #define MCR20A_PSDU_LENGTH		(125)
 #define MCR20A_GET_SEQ_STATE_RETRIES	(3)
@@ -169,6 +166,7 @@ u8_t _mcr20a_read_reg(struct mcr20a_spi *spi, bool dreg, u8_t addr)
 		return spi->cmd_buf[len - 1];
 	}
 
+	SYS_LOG_ERR("Failed");
 	k_sem_give(&spi->spi_sem);
 
 	return 0;
@@ -202,11 +200,12 @@ bool _mcr20a_write_burst(struct mcr20a_spi *spi, bool dreg, u16_t addr,
 {
 	bool retval;
 
-	k_sem_take(&spi->spi_sem, K_FOREVER);
-
 	if ((len + 2) > sizeof(spi->cmd_buf)) {
-		SYS_LOG_ERR("Buffer length too large");
+		SYS_LOG_ERR("cmd buffer too small");
+		return false;
 	}
+
+	k_sem_take(&spi->spi_sem, K_FOREVER);
 
 	if (dreg) {
 		spi->cmd_buf[0] = MCR20A_REG_WRITE | addr;
@@ -231,11 +230,12 @@ bool _mcr20a_write_burst(struct mcr20a_spi *spi, bool dreg, u16_t addr,
 bool _mcr20a_read_burst(struct mcr20a_spi *spi, bool dreg, u16_t addr,
 			u8_t *data_buf, u8_t len)
 {
-	k_sem_take(&spi->spi_sem, K_FOREVER);
-
 	if ((len + 2) > sizeof(spi->cmd_buf)) {
-		SYS_LOG_ERR("Buffer length too large");
+		SYS_LOG_ERR("cmd buffer too small");
+		return false;
 	}
+
+	k_sem_take(&spi->spi_sem, K_FOREVER);
 
 	if (dreg) {
 		spi->cmd_buf[0] = MCR20A_REG_READ | addr;
@@ -251,7 +251,7 @@ bool _mcr20a_read_burst(struct mcr20a_spi *spi, bool dreg, u16_t addr,
 	if (spi_transceive(spi->dev, spi->cmd_buf, len,
 			   spi->cmd_buf, len) != 0) {
 		k_sem_give(&spi->spi_sem);
-		return 0;
+		return false;
 	}
 
 	if (dreg) {
@@ -262,7 +262,7 @@ bool _mcr20a_read_burst(struct mcr20a_spi *spi, bool dreg, u16_t addr,
 
 	k_sem_give(&spi->spi_sem);
 
-	return 1;
+	return true;
 }
 
 /* Mask (msk is true) or unmask all interrupts from asserting IRQ_B */
@@ -862,6 +862,7 @@ static enum ieee802154_hw_caps mcr20a_get_capabilities(struct device *dev)
 {
 	return IEEE802154_HW_FCS |
 		IEEE802154_HW_2_4_GHZ |
+		IEEE802154_HW_TX_RX_ACK |
 		IEEE802154_HW_FILTER;
 }
 
@@ -934,7 +935,7 @@ static int mcr20a_set_channel(struct device *dev, u16_t channel)
 
 	ctrl1 = read_reg_phy_ctrl1(&mcr20a->spi);
 
-	if (mcr20a_abort_sequence(mcr20a, false)) {
+	if (mcr20a_abort_sequence(mcr20a, true)) {
 		SYS_LOG_ERR("Failed to reset XCV sequence");
 		goto out;
 	}
@@ -976,7 +977,8 @@ static int mcr20a_set_pan_id(struct device *dev, u16_t pan_id)
 	k_mutex_lock(&mcr20a->phy_mutex, K_FOREVER);
 
 	if (!write_burst_pan_id(&mcr20a->spi, (u8_t *) &pan_id)) {
-		SYS_LOG_ERR("FAILED");
+		SYS_LOG_ERR("Failed");
+		k_mutex_unlock(&mcr20a->phy_mutex);
 		return -EIO;
 	}
 
@@ -994,7 +996,8 @@ static int mcr20a_set_short_addr(struct device *dev, u16_t short_addr)
 	k_mutex_lock(&mcr20a->phy_mutex, K_FOREVER);
 
 	if (!write_burst_short_addr(&mcr20a->spi, (u8_t *) &short_addr)) {
-		SYS_LOG_ERR("FAILED");
+		SYS_LOG_ERR("Failed");
+		k_mutex_unlock(&mcr20a->phy_mutex);
 		return -EIO;
 	}
 
@@ -1012,6 +1015,7 @@ static int mcr20a_set_ieee_addr(struct device *dev, const u8_t *ieee_addr)
 
 	if (!write_burst_ext_addr(&mcr20a->spi, (void *)ieee_addr)) {
 		SYS_LOG_ERR("Failed");
+		k_mutex_unlock(&mcr20a->phy_mutex);
 		return -EIO;
 	}
 
@@ -1108,8 +1112,8 @@ static int mcr20a_tx(struct device *dev,
 		     struct net_buf *frag)
 {
 	struct mcr20a_context *mcr20a = dev->driver_data;
-	u8_t seq = MCR20A_AUTOACK_ENABLED ? MCR20A_XCVSEQ_TX_RX :
-					       MCR20A_XCVSEQ_TX;
+	u8_t seq = ieee802154_is_ar_flag_set(pkt) ? MCR20A_XCVSEQ_TX_RX :
+						    MCR20A_XCVSEQ_TX;
 	int retval;
 
 	k_mutex_lock(&mcr20a->phy_mutex, K_FOREVER);
@@ -1342,11 +1346,9 @@ static int power_on_and_setup(struct device *dev)
 	write_reg_rx_wtr_mark(&mcr20a->spi, 8);
 
 	/* Configure PHY behaviour */
-	tmp = MCR20A_PHY_CTRL1_CCABFRTX;
-	if (MCR20A_AUTOACK_ENABLED) {
-		tmp |= MCR20A_PHY_CTRL1_AUTOACK |
-		       MCR20A_PHY_CTRL1_RXACKRQD;
-	}
+	tmp = MCR20A_PHY_CTRL1_CCABFRTX |
+	      MCR20A_PHY_CTRL1_AUTOACK |
+	      MCR20A_PHY_CTRL1_RXACKRQD;
 	write_reg_phy_ctrl1(&mcr20a->spi, tmp);
 
 	/* Enable Sequence-end interrupt */
